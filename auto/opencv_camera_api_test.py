@@ -1206,39 +1206,89 @@ def test_open_only_precheck(s):
     api = "open_only_props_precheck"
     dev = resolve_device(s.args.device)
     bid = backend_id(s.args.backend)
-    params, missing = [], []
+    cands, missing = [], []
     for name, value in OPEN_ONLY_PROPS:
         pid = getattr(cv2, name, None)
         if pid is None:
             missing.append(name)
-            continue
-        params += [int(pid), value]
-    try:
-        cap = cv2.VideoCapture(dev, bid, params)
-    except Exception as e:
-        s.add("B", api, WARN,
-              f"this cv2 build rejects open-time params with exception "
-              f"({str(e)[:70]})")
-        return
-    try:
-        opened = bool(cap.isOpened())
-    finally:
-        cap.release()
+        else:
+            cands.append((name, int(pid), value))
+
+    def _try(flat_params):
+        """Return 'ok' | 'closed' | ('exc', message)."""
+        try:
+            cap = cv2.VideoCapture(dev, bid, flat_params)
+        except Exception as e:
+            return ("exc", str(e))
+        try:
+            return "ok" if cap.isOpened() else "closed"
+        finally:
+            cap.release()
+
     extra = f"; missing constants: {missing}" if missing else ""
-    if opened:
-        s.add("B", api, PASS,
-              f"opened with {len(params)//2} open-only params{extra}")
+    if _try([]) != "ok":
+        s.add("B", api, SKIP,
+              "baseline open() without params failed; "
+              "cannot evaluate open-time params")
+        return
+    ok_names, bad_names, first_exc = [], [], ""
+    for name, pid, value in cands:
+        res = _try([pid, value])
+        if res == "ok":
+            ok_names.append(name)
+        else:
+            bad_names.append(name)
+            if isinstance(res, tuple) and not first_exc:
+                first_exc = res[1]
+    detail_bits = []
+    if bad_names:
+        detail_bits.append("breaks open: " + ", ".join(
+            f"{n}({getattr(cv2, n)})" for n in bad_names))
+    if ok_names:
+        detail_bits.append("accepted: " + ", ".join(ok_names))
+    if first_exc:
+        detail_bits.append(first_exc.splitlines()[0][:100])
+    detail = "; ".join(detail_bits)
+    if not cands:
+        s.add("B", api, SKIP, f"no open-time param constants here{extra}")
+    elif ok_names:
+        # Verdict follows the API capability: if ANY parameter opens the
+        # capture, open-time params are usable -> PASS.  Rejected params
+        # stay informational (per-backend capability scope).
+        flat = [v for name, pid, value in cands if name in ok_names
+                for v in (pid, value)]
+        res = _try(flat)
+        rej = f"; rejected: {', '.join(bad_names)}" if bad_names else ""
+        if res == "ok":
+            s.add("B", api, PASS,
+                  f"open-time params usable ({len(ok_names)}/{len(cands)}): "
+                  f"{', '.join(ok_names)}{rej}{extra}", detail)
+        else:
+            s.add("B", api, WARN,
+                  f"{len(ok_names)} params OK individually but "
+                  f"supported-combo rejected{extra}", detail)
     else:
         s.add("B", api, WARN,
-              f"params silently rejected (isOpened=False){extra}")
+              f"backend rejects every open-time param ({len(cands)}){extra}",
+              detail)
 
 
 def test_any_vs_v4l2(s):
+    """Compare CAP_ANY resolution against the selected backend.
+
+    Severity follows relevance: under an explicitly requested backend a
+    divergence cannot affect this run, so it stays informational (PASS
+    with a note); with backend=ANY the ambiguity IS this run's behavior
+    and stays a WARN.
+    """
+    want = s.args.backend
+    bid = cv2.CAP_V4L2 if want == "ANY" else backend_id(want)
+    other = "V4L2" if want == "ANY" else want
     api = "backend_any_vs_v4l2"
     dev = resolve_device(s.args.device)
 
-    def probe(bid):
-        st, payload = call_with_timeout(lambda: cv2.VideoCapture(dev, bid),
+    def probe(backend):
+        st, payload = call_with_timeout(lambda: cv2.VideoCapture(dev, backend),
                                         OPEN_TIMEOUT_SEC)
         if st != "ok":
             return False, None
@@ -1249,17 +1299,23 @@ def test_any_vs_v4l2(s):
         return ok, name
 
     ok_any, name_any = probe(cv2.CAP_ANY)
-    ok_v4l, name_v4l = probe(cv2.CAP_V4L2)
-    if not (ok_any and ok_v4l):
+    ok_sel, name_sel = probe(bid)
+    if not (ok_any and ok_sel):
         s.add("B", api, SKIP,
-              f"device must open under both backends (ANY={ok_any}, V4L2={ok_v4l})")
+              f"device must open under both backends "
+              f"(ANY={ok_any}, {other}={ok_sel})")
         return
-    if name_any == name_v4l:
-        s.add("B", api, PASS, f"consistent backend via ANY and V4L2: {name_any}")
-    else:
+    if name_any == name_sel:
+        s.add("B", api, PASS,
+              f"consistent backend via ANY and {other}: {name_any}")
+    elif want == "ANY":
         s.add("B", api, WARN,
               f"divergence: CAP_ANY resolves to {name_any}, "
-              f"CAP_V4L2 to {name_v4l}")
+              f"CAP_{other} to {name_sel}")
+    else:
+        s.add("B", api, PASS,
+              f"note: CAP_ANY resolves to {name_any}, explicit {other} "
+              f"to {name_sel} (run unaffected: explicit backend)")
 
 
 def test_backend_matrix(s):

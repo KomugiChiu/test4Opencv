@@ -77,6 +77,18 @@ def render(json_path, out_path):
     ws.append(["total checks", total_checks])
     ws.append(["core coverage", f"{cov:.1f}% ({executed}/{core_total})"])
     ws.append(["passed ratio (excl. skip/warn)", f"{ratio:.1f}%"])
+    if summ.get("pass_rate_percent") is not None:
+        ws.append(["pass rate (all)", f"{summ['pass_rate_percent']}% "
+                   f"({counts['PASS']}/{total_checks})"])
+        ws.append(["pass rate (excl. SKIP)", f"{summ['pass_rate_excl_skip_percent']}%"
+                   f" ({counts['PASS']}/{total_checks - counts['SKIP']})"])
+        ws.append(["core pass rate (all / excl SKIP)",
+                   f"{summ['core_pass_rate_percent']}% / "
+                   f"{summ['core_pass_rate_excl_skip_percent']}%"])
+        ws.append(["sweep [F] pass rate (all / excl SKIP)",
+                   f"{summ['sweep_f_pass_rate_percent']}% / "
+                   f"{summ['sweep_f_pass_rate_excl_skip_percent']}% "
+                   f"(WARN {summ.get('WARN', 0)}, total {summ.get('sweep_f_total', '?')})"])
     ws["A1"].font = Font(bold=True, size=14)
     for i in range(2, ws.max_row + 1):
         ws.cell(row=i, column=1).font = Font(bold=True)

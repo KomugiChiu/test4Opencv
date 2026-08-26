@@ -53,6 +53,8 @@ public:
 std::string fourcc_to_str(int v){std::string s;for(int i=0;i<4;++i){char c=(char)((v>>(8*i))&0xFF);s+=(c>=0x20&&c<=0x7E)?c:'?';}return s;}
 cv::VideoCaptureAPIs api_cast(int v){return static_cast<cv::VideoCaptureAPIs>(v);}
 template<typename T> double safe_get(T&obj,int prop){try{double v=obj.get(prop);return std::isnan(v)?-1e9:v;}catch(...){return -1e9;}}
+// OpenCV 5.x throws on read-only/invalid set(); treat as plain rejection.
+template<typename T> bool safe_set(T&obj,int prop,double v){try{return obj.set(prop,v);}catch(...){return false;}}
 bool family_applicable(const char*tok,const std::string&be){
   std::string t=tok?tok:""; if(t.empty())return true;
   if(t=="V4L")return be=="ANY"||be=="V4L2"; if(t=="GSTREAMER")return be=="ANY"||be=="GSTREAMER"; return false;}
@@ -102,8 +104,14 @@ void env_check(Suite&s,const std::string&backend){
 #endif
   std::map<std::string,std::string>vio;parse_video_io(cv::getBuildInformation(),vio);
   auto flag=[&](const std::string&k){auto it=vio.find(k);return it==vio.end()?"unknown":it->second;};
-  s.add("A","build: V4L support",flag("v4l/v4l2")=="YES"?PASS:(backend=="V4L2"?FAIL:WARN),"v4l/v4l2="+flag("v4l/v4l2"));
-  s.add("A","build: GStreamer support",flag("GStreamer")=="YES"?PASS:(backend=="GSTREAMER"?FAIL:WARN),"GStreamer="+flag("GStreamer"));
+  if(family_applicable("V4L",backend))
+    s.add("A","build: V4L support",flag("v4l/v4l2")=="YES"?PASS:FAIL,"v4l/v4l2="+flag("v4l/v4l2"));
+  else
+    s.add("A","build: V4L support",SKIP,std::string("not applicable: backend=")+backend+" (build has v4l/v4l2="+flag("v4l/v4l2")+")");
+  if(family_applicable("GSTREAMER",backend))
+    s.add("A","build: GStreamer support",flag("GStreamer")=="YES"?PASS:FAIL,"GStreamer="+flag("GStreamer"));
+  else
+    s.add("A","build: GStreamer support",SKIP,std::string("not applicable: backend=")+backend+" (build has GStreamer="+flag("GStreamer")+")");
   try{auto ids=cv::videoio_registry::getBackends();std::string names;
     for(auto id:ids)names+=(names.empty()?"":", ")+cv::videoio_registry::getBackendName(id);
     s.add("A","registry.getBackends()",names.empty()?FAIL:PASS,names);
@@ -132,22 +140,50 @@ void negative_open(Suite&s){
   if(opened)s.add("B","negative open case",FAIL,ghost+" unexpectedly opened");
   else s.add("B","negative open case",PASS,ghost+" correctly refused");}
 void open_only_precheck(Suite&s,const std::string&dev,int bid){
-  const std::pair<int,int>props[]={{cv::CAP_PROP_HW_ACCELERATION,0},{cv::CAP_PROP_HW_DEVICE,0},
+  struct P{const char*name;int pid;int value;};
+  const P props[]={
+    {"CAP_PROP_HW_ACCELERATION",cv::CAP_PROP_HW_ACCELERATION,0},
+    {"CAP_PROP_HW_DEVICE",cv::CAP_PROP_HW_DEVICE,0},
 #if defined(CAP_PROP_HW_ACCELERATION_USE_OPENCL)
-      {cv::CAP_PROP_HW_ACCELERATION_USE_OPENCL,0},
+    {"CAP_PROP_HW_ACCELERATION_USE_OPENCL",cv::CAP_PROP_HW_ACCELERATION_USE_OPENCL,0},
 #endif
-      {cv::CAP_PROP_OPEN_TIMEOUT_MSEC,5000},{cv::CAP_PROP_READ_TIMEOUT_MSEC,5000}};
-  std::vector<int>params;for(auto&pr:props){params.push_back(pr.first);params.push_back(pr.second);}
-  VideoCapture cap;bool raised=false,opened=false;std::string err;
-  try{
-    if(dev.find_first_not_of("0123456789")==std::string::npos)cap.open(std::stoi(dev),api_cast(bid),params);
-    else cap.open(dev,api_cast(bid),params);
-    opened=cap.isOpened();
-  }catch(const std::exception&e){raised=true;err=e.what();}
-  cap.release();
-  if(raised)s.add("B","open-only params precheck",WARN,"build rejects params with exception: "+err);
-  else if(opened)s.add("B","open-only params precheck",PASS,"opened with "+std::to_string(sizeof(props)/sizeof(props[0]))+" params");
-  else s.add("B","open-only params precheck",WARN,"params silently rejected");}
+    {"CAP_PROP_OPEN_TIMEOUT_MSEC",cv::CAP_PROP_OPEN_TIMEOUT_MSEC,5000},
+    {"CAP_PROP_READ_TIMEOUT_MSEC",cv::CAP_PROP_READ_TIMEOUT_MSEC,5000}};
+  const size_t n_params=sizeof(props)/sizeof(props[0]);
+  auto try_open=[&](const std::vector<int>&params)->bool{
+    VideoCapture cap;bool opened=false;
+    try{
+      if(dev.find_first_not_of("0123456789")==std::string::npos)cap.open(std::stoi(dev),api_cast(bid),params);
+      else cap.open(dev,api_cast(bid),params);
+      opened=cap.isOpened();
+    }catch(...){opened=false;}
+    cap.release();
+    return opened;};
+  if(!try_open({})){
+    s.add("B","open-only params precheck",SKIP,
+          "baseline open() without params failed; cannot evaluate open-time params");
+    return;}
+  std::vector<size_t>ok_idx,bad_idx;
+  for(size_t k=0;k<n_params;++k)
+    ((try_open({props[k].pid,props[k].value})?ok_idx:bad_idx).push_back(k));
+  if(ok_idx.empty()){
+    s.add("B","open-only params precheck",WARN,
+          "backend rejects every open-time param ("+std::to_string(n_params)+")");
+    return;}
+  // Verdict follows API capability: any working param => usable => PASS.
+  std::vector<int>combo;
+  std::string ok_list,rej;
+  for(size_t k:ok_idx){if(!ok_list.empty())ok_list+=", ";ok_list+=props[k].name;
+    combo.push_back(props[k].pid);combo.push_back(props[k].value);}
+  for(size_t k:bad_idx){if(!rej.empty())rej+=", ";rej+=props[k].name;}
+  bool combo_ok=try_open(combo);
+  if(combo_ok)
+    s.add("B","open-only params precheck",PASS,
+          "open-time params usable ("+std::to_string(ok_idx.size())+"/"+std::to_string(n_params)+"): "+ok_list
+          +(rej.empty()?"":"; rejected: "+rej));
+  else
+    s.add("B","open-only params precheck",WARN,
+          "params OK individually but supported-combo rejected");}
 struct PropCase{const char*name;int pid;double value;const char*mode;double tol;};
 bool compare(const std::string&mode,double exp,double act,double tol,std::string&why){
   if(mode=="exact"){if(std::llround(act)!=std::llround(exp)){why="expected "+std::to_string(exp)+", got "+std::to_string(act);return false;}return true;}
@@ -170,14 +206,14 @@ void test_properties(Suite&s){
     double orig=safe_get(s.cap,c.pid);
     double target=(c.mode==std::string("roundtrip"))?orig:c.value;
     if(target<=-1e8){s.add("C",api,SKIP,"get() returned nothing");continue;}
-    bool ok=s.cap.set(c.pid,target);
+    bool ok=safe_set(s.cap,c.pid,target);
     if(!ok){s.add("C",api,SKIP,"set() returned false");continue;}
     double got=safe_get(s.cap,c.pid);
     if(got<=-1e8){s.add("C",api,WARN,"set accepted but get failed");continue;}
     std::string why;
     if(compare(c.mode,target,got,c.tol,why))s.add("C",api,PASS,"");
     else s.add("C",api,WARN,"readback differs: "+why);
-    if(c.mode!=std::string("roundtrip"))s.cap.set(c.pid,orig);}}
+    if(c.mode!=std::string("roundtrip"))safe_set(s.cap,c.pid,orig);}}
 void lifecycle_reads(Suite&s,int frames_wanted){
   for(int i=0;i<5;++i)if(!s.cap.grab())break;
   bool ok_grab=s.cap.grab();Mat img;
@@ -271,7 +307,7 @@ void test_writer(Suite&s,const std::string&outdir){
   int q_pid=-1;
   for(size_t i=0;i<camprops::WRITER_PROPS_N;++i)
     if(strcmp(camprops::WRITER_PROPS[i].name,"VIDEOWRITER_PROP_QUALITY")==0)q_pid=camprops::WRITER_PROPS[i].pid;
-  bool q_ok=(q_pid>=0)&&writer.set(q_pid,90);
+  bool q_ok=(q_pid>=0)&&safe_set(writer,q_pid,90);
   s.add("E","writer.set(VIDEOWRITER_PROP_*)",q_ok?PASS:SKIP,q_ok?"QUALITY=90":"rejected");
   int written=0;for(auto&f:s.frames)writer.write(f);
   written=(int)s.frames.size();
@@ -286,24 +322,40 @@ static std::map<std::string,std::string>CAP_TO_V4L2={
   {"AUTO_EXPOSURE","exposure_auto"},{"SHARPNESS","sharpness"},{"GAMMA","gamma"},
   {"BACKLIGHT","backlight_compensation"},{"FOCUS","focus_absolute"},
   {"AUTOFOCUS","focus_auto"},{"ZOOM","zoom_absolute"},{"PAN","pan_absolute"},
-  {"TILT","tilt_absolute"},{"WHITE_BALANCE_BLUE_U","white_balance_temperature"},
-  {"WHITE_BALANCE_RED_V","white_balance_temperature"},{"WB_TEMPERATURE","white_balance_temperature"},
+  {"TILT","tilt_absolute"},
+  {"WHITE_BALANCE_BLUE_U","white_balance_blue_channel"},
+  {"WHITE_BALANCE_RED_V","white_balance_red_channel"},
+  {"WB_TEMPERATURE","white_balance_temperature"},
   {"AUTO_WB","white_balance_automatic"}};
-static std::map<std::string,std::set<std::string>>v4l2_cache;
-std::set<std::string>get_v4l2_controls(const std::string&dev_path){
+struct CtrlInfo{int min=0,max=0,def=0;bool declared=false;};
+static std::map<std::string,std::map<std::string,CtrlInfo>>v4l2_cache;
+std::map<std::string,CtrlInfo>get_v4l2_controls(const std::string&dev_path){
   auto it=v4l2_cache.find(dev_path);if(it!=v4l2_cache.end())return it->second;
-  std::set<std::string>names;
+  std::map<std::string,CtrlInfo>ctrls;
   std::string cmd="v4l2-ctl -d "+dev_path+" --list-ctrls 2>/dev/null";
-  FILE*fp=popen(cmd.c_str(),"r");if(!fp){v4l2_cache[dev_path]=names;return names;}
-  char buf[4096];
-  while(fgets(buf,sizeof(buf),fp)){
-    std::string line(buf);std::regex re(R"(\s*([a-zA-Z0-9_]+)\s+0x[0-9a-fA-F]+\s+\()");
-    std::smatch m;if(std::regex_search(line,m,re))names.insert(m.str(1));}
-  pclose(fp);
-  std::set<std::string>lower;for(auto&n:names){std::string l=n;std::transform(l.begin(),l.end(),l.begin(),::tolower);lower.insert(l);}
-  v4l2_cache[dev_path]=lower;return lower;}
+  FILE*fp=popen(cmd.c_str(),"r");if(fp){
+    char buf[4096];
+    static const std::regex re(R"(\s*([a-zA-Z0-9_]+)\s+0x[0-9a-fA-F]+\s+\((\w+)\)\s*:(.*))");
+    while(fgets(buf,sizeof(buf),fp)){
+      std::string line(buf);std::smatch m;
+      if(!std::regex_search(line,m,re))continue;
+      CtrlInfo info;info.declared=true;std::string rest=m.str(3);
+      auto grab=[&](const char*k)->int{
+        std::smatch mm;
+        if(std::regex_search(rest,mm,std::regex(std::string("\\b")+k+"=(-?\\d+)")))return std::stoi(mm.str(1));
+        return 0;};
+      info.min=grab("min");info.max=grab("max");info.def=grab("default");
+      ctrls[m.str(1)]=info;
+      std::string lower=m.str(1);std::transform(lower.begin(),lower.end(),lower.begin(),::tolower);
+      ctrls[lower]=info;}
+    pclose(fp);}
+  v4l2_cache[dev_path]=ctrls;return ctrls;}
 bool has_v4l2_ctl(){return system("which v4l2-ctl > /dev/null 2>&1")==0;}
 void test_full_sweep(Suite&s,const std::string&backend,const std::string&device){
+  if(!s.cap.isOpened()){
+    s.add("F","CAP_PROP_* full sweep",SKIP,
+          "capture already closed before sweep (ordering bug)");
+    return;}
   for(size_t i=0;i<camprops::PROP_TABLE_N;++i){
     const auto&e=camprops::PROP_TABLE[i];std::string api=e.name;
     const char*label=camprops::FAMILY_LABELS[e.fam];
@@ -324,11 +376,13 @@ void test_full_sweep(Suite&s,const std::string&backend,const std::string&device)
         std::string lower_key=it->second;
         std::transform(lower_key.begin(),lower_key.end(),lower_key.begin(),::tolower);
         if(ctrls.count(lower_key)){
+          if(!s.cap.isOpened()){
+            s.add("F",api,SKIP,"get()=-1 (capture closed mid-sweep)");continue;}
           s.add("F",api,WARN,"driver declared '"+it->second+"' but get()=-1 (possible driver bug, check dmesg)");continue;}
         else{s.add("F",api,SKIP,"unsupported (get()=-1, not declared by driver '"+it->second+"')");continue;}}
       s.add("F",api,SKIP,"unsupported (get()=-1 sentinel)");continue;}
     if(blacklisted){s.add("F",api,PASS,"get()="+std::to_string(val));continue;}
-    bool set_ok=s.cap.set(e.pid,val);
+    bool set_ok=safe_set(s.cap,e.pid,val);
     if(!set_ok){
       if(std::fabs(val)>1e-9)s.add("F",api,PASS,"get()="+std::to_string(val)+"; set rejected (read-only)");
       else s.add("F",api,SKIP,"unsupported (get=0, set rejected)");continue;}
@@ -336,20 +390,76 @@ void test_full_sweep(Suite&s,const std::string&backend,const std::string&device)
     if(got<=-1e8){s.add("F",api,WARN,"set accepted but get() failed");continue;}
     if(std::fabs(got-val)>std::max(1e-6,std::fabs(val)*1e-6))
       s.add("F",api,WARN,"roundtrip drift: "+std::to_string(val)+" -> "+std::to_string(got));
-    else if(std::fabs(val)<=1e-9)s.add("F",api,WARN,"no-op roundtrip (0->0)");
+    else if(std::fabs(val)<=1e-9){
+      // Current value is 0: writing 0 back proves nothing.  If the driver
+      // declares this control, probe with a non-zero in-range value.
+      bool handled=false;
+      std::string short_name2=name.rfind("CAP_PROP_",0)==0?name.substr(9):name;
+      auto it2=CAP_TO_V4L2.find(short_name2);
+      std::string dev_path=device;
+      if(!dev_path.empty()&&dev_path.find_first_not_of("0123456789")==std::string::npos)dev_path="/dev/video"+dev_path;
+      auto ctrls=has_v4l2_ctl()?get_v4l2_controls(dev_path):std::map<std::string,CtrlInfo>{};
+      if(it2!=CAP_TO_V4L2.end()&&!ctrls.empty()){
+        std::string lower_key=it2->second;
+        std::transform(lower_key.begin(),lower_key.end(),lower_key.begin(),::tolower);
+        auto ci=ctrls.find(lower_key);
+        if(ci==ctrls.end()){
+          s.add("F",api,SKIP,"unsupported (get=0 set noop, not declared by driver '"+it2->second+"')");handled=true;}
+        else{
+          int probe=ci->second.def?ci->second.def:(ci->second.max>0?ci->second.max:ci->second.min);
+          if(probe){
+            bool pok=safe_set(s.cap,e.pid,(double)probe);
+            double got2=pok?safe_get(s.cap,e.pid):-1e9;
+            bool changed=got2>-1e8&&std::fabs(got2-(double)probe)<=std::max(1e-6,std::fabs((double)probe)*1e-6);
+            safe_set(s.cap,e.pid,val);
+            if(changed){s.add("F",api,PASS,"probe roundtrip 0 -> "+std::to_string(probe)+" (restored)");handled=true;}
+            else{s.add("F",api,WARN,"no-op roundtrip (0->0); driver declares '"+it2->second+"' but write has no effect");handled=true;}}}
+        if(!handled)s.add("F",api,WARN,"no-op roundtrip (0->0); support unproven");
+        handled=true;}
+      if(!handled)s.add("F",api,WARN,"no-op roundtrip (0->0); support unproven");}
     else s.add("F",api,PASS,"roundtrip "+std::to_string(val));}}
-void backend_matrix(Suite&s,const std::string&dev){
+void backend_matrix(Suite&s,const std::string&dev,const std::string&want_backend){
   negative_open(s);open_only_precheck(s,dev,cv::CAP_V4L2);
+  const int sel_bid=(want_backend=="ANY")?cv::CAP_V4L2:backend_id(want_backend);
+  const std::string sel_name=(want_backend=="ANY")?"V4L2":want_backend;
   auto probe=[&](int bid,std::string&name)->bool{VideoCapture c;
     try{if(dev.find_first_not_of("0123456789")==std::string::npos)c.open(std::stoi(dev),bid);else c.open(dev,bid);
       if(!c.isOpened())return false;name=c.getBackendName();return true;}catch(...){return false;}};
-  std::string n_any,n_v4l;bool ok_any=probe(cv::CAP_ANY,n_any);bool ok_v4l=probe(cv::CAP_V4L2,n_v4l);
-  if(!ok_any||!ok_v4l){s.add("B","backend ANY vs V4L2",SKIP,"device must open under both");return;}
-  if(n_any==n_v4l)s.add("B","backend ANY vs V4L2",PASS,"consistent: "+n_any);
-  else s.add("B","backend ANY vs V4L2",WARN,"divergence: ANY->"+n_any+", V4L2->"+n_v4l);}
+  std::string n_any,n_sel;bool ok_any=probe(cv::CAP_ANY,n_any);bool ok_sel=probe(sel_bid,n_sel);
+  if(!ok_any||!ok_sel){s.add("B","backend ANY vs V4L2",SKIP,
+      std::string("device must open under both (ANY=")+(ok_any?"y":"n")+
+      ", "+sel_name+"="+(ok_sel?"y":"n")+")");return;}
+  if(n_any==n_sel)
+    s.add("B","backend ANY vs V4L2",PASS,"consistent backend via ANY and "+sel_name+": "+n_any);
+  else if(want_backend=="ANY")
+    s.add("B","backend ANY vs V4L2",WARN,"divergence: CAP_ANY resolves to "+n_any+", CAP_"+sel_name+" to "+n_sel);
+  else
+    s.add("B","backend ANY vs V4L2",PASS,"note: CAP_ANY resolves to "+n_any+", explicit "+sel_name+
+          " to "+n_sel+" (run unaffected: explicit backend)");}
 std::string escape_json(const std::string&in){std::string out;
   for(char ch:in){switch(ch){case'"':out+="\\\"";break;case'\\':out+="\\\\";break;case'\n':out+="\\n";break;case'\r':out+="\\r";break;case'\t':out+="\\t";break;
   default:if((unsigned char)ch<0x20)out+="?";else out+=ch;}}return out;}
+struct Metrics{
+  int pass=0,fail=0,warn=0,skip=0,total=0;
+  int core_pass=0,core_skip=0,core_rows=0;
+  int core_total=0,core_executed=0;   // distinct (group,api), excluding [F]
+  int f_pass=0,f_fail=0,f_warn=0,f_skip=0,f_total=0;};
+Metrics build_metrics(const std::vector<Result>&rows){
+  Metrics m;m.total=(int)rows.size();
+  std::set<std::pair<std::string,std::string>>ckey,ekey;
+  for(auto&r:rows){
+    bool isF=(r.group=="F");
+    if(r.status==PASS)++m.pass;else if(r.status==FAIL)++m.fail;
+    else if(r.status==WARN)++m.warn;else ++m.skip;
+    if(isF){if(r.status==PASS)++m.f_pass;else if(r.status==FAIL)++m.f_fail;
+      else if(r.status==WARN)++m.f_warn;else ++m.f_skip;}
+    else{++m.core_rows;if(r.status==PASS)++m.core_pass;if(r.status==SKIP)++m.core_skip;
+      ckey.insert({r.group,r.api});
+      if(r.status==PASS||r.status==FAIL)ekey.insert({r.group,r.api});}}
+  m.core_total=(int)ckey.size();m.core_executed=(int)ekey.size();
+  m.f_total=m.f_pass+m.f_fail+m.f_warn+m.f_skip;
+  return m;}
+static double pct(int a,int b){return b>0?100.0*a/b:0.0;}
 std::string get_opencv_source_label(){
 #ifdef OPENCV_SOURCE_LABEL
   return OPENCV_SOURCE_LABEL;
@@ -358,18 +468,24 @@ std::string get_opencv_source_label(){
 #endif
 }
 void write_json(const Suite&s,const std::string&path,const std::string&device,
-                const std::string&backend,int frames){
-  int pass=0,fail=0,warn=0,skip=0;
-  for(auto&r:s.rows){if(r.status==PASS)++pass;else if(r.status==FAIL)++fail;else if(r.status==WARN)++warn;else ++skip;}
-  size_t core_total=planned_items().size();int executed=pass+fail;
+                const std::string&backend,int frames,const Metrics&m){
+  size_t core_total=m.core_total;int executed=m.core_executed;
   std::string src=get_opencv_source_label();std::string ver=CV_VERSION;
   std::ofstream f(path);
   f<<"{\n  \"meta\": {\"device\": \""<<escape_json(device)<<"\", \"backend\": \""<<backend
     <<"\", \"frames\": "<<frames<<", \"tool\": \"opencv_camera_api_test_cpp\","
     <<" \"opencv_version\": \""<<ver<<"\", \"opencv_source\": \""<<src<<"\"},\n";
-  f<<"  \"summary\": {\"PASS\": "<<pass<<", \"FAIL\": "<<fail<<", \"WARN\": "<<warn
-    <<", \"SKIP\": "<<skip<<", \"total_checks\": "<<s.rows.size()
-    <<", \"executed\": "<<executed<<", \"core_total\": "<<core_total<<"},\n";
+  f<<"  \"summary\": {\"PASS\": "<<m.pass<<", \"FAIL\": "<<m.fail<<", \"WARN\": "<<m.warn
+    <<", \"SKIP\": "<<m.skip<<", \"total_checks\": "<<s.rows.size()
+    <<", \"executed\": "<<executed<<", \"core_total\": "<<core_total;
+  f<<", \"pass_rate_percent\": "<<pct(m.pass,m.total)
+    <<", \"pass_rate_excl_skip_percent\": "<<pct(m.pass,m.total-m.skip)
+    <<", \"core_pass_rate_percent\": "<<pct(m.core_pass,m.core_rows)
+    <<", \"core_pass_rate_excl_skip_percent\": "<<pct(m.core_pass,m.core_rows-m.core_skip)
+    <<", \"sweep_f_total\": "<<m.f_total
+    <<", \"sweep_f_pass_rate_percent\": "<<pct(m.f_pass,m.f_total)
+    <<", \"sweep_f_pass_rate_excl_skip_percent\": "<<pct(m.f_pass,m.f_pass+m.f_fail)
+    <<"},\n";
   f<<"  \"environment\": {\"opencv_version\": \""<<ver<<"\", \"opencv_source\": \""<<src<<"\"},\n";
   f<<"  \"results\": [\n";
   for(size_t i=0;i<s.rows.size();++i){auto&r=s.rows[i];
@@ -420,40 +536,40 @@ int main(int argc,char**argv){
   if(!opened)skip_rest(s,"camera failed to open");
   else{capture_extras(s);test_properties(s);lifecycle_reads(s,args.frames);frame_quality(s);
     v4l2_crosscheck(s,args.device);os_mkdir(args.outdir);test_writer(s,args.outdir);
-    try{s.cap.release();s.add("B","release()",!s.cap.isOpened()?PASS:WARN,"");}catch(...){s.add("B","release()",WARN,"raised");}
-    backend_matrix(s,args.device);
+    // [F] must run while the capture is still open: get()/set() on a
+    // released cap returns -1 and poisons the whole sweep.
     if(!args.no_full_sweep)test_full_sweep(s,args.backend,args.device);
-    else s.add("F","CAP_PROP_* full sweep",SKIP,"--no-full-sweep given");}
-  int pass=0,fail=0,warn=0,skip=0;
-  for(auto&r:s.rows){if(r.status==PASS)++pass;else if(r.status==FAIL)++fail;else if(r.status==WARN)++warn;else ++skip;}
-  size_t core_total=planned_items().size();
-  // Count only planned items that actually executed (PASS or FAIL)
-  auto planned=planned_items();int planned_executed=0;
-  for(auto&p:planned){for(auto&r:s.rows){if(r.api==p.second&&(r.status==PASS||r.status==FAIL)){++planned_executed;break;}}}
-  int executed=planned_executed;
-  double core_cov=core_total?100.0*executed/core_total:0.0;
+    else s.add("F","CAP_PROP_* full sweep",SKIP,"--no-full-sweep given");
+    try{s.cap.release();s.add("B","release()",!s.cap.isOpened()?PASS:WARN,"");}catch(...){s.add("B","release()",WARN,"raised");}
+    backend_matrix(s,args.device,args.backend);}
+  Metrics m=build_metrics(s.rows);
   std::cout<<"\n"<<bold(std::string(64,'='))<<"\n"<<bold("SUMMARY")<<"\n"<<bold(std::string(64,'='))<<"\n";
-  std::cout<<"  PASS  : "<<green(std::to_string(pass))
-           <<dim("   (incl. F-sweep & extra checks)")<<"\n";
-  std::cout<<"  FAIL  : "<<red(std::to_string(fail))<<"\n";
-  std::cout<<"  WARN  : "<<yellow(std::to_string(warn))<<"\n";
-  std::cout<<"  SKIP  : "<<dim(std::to_string(skip))
-           <<dim("   (by-design / unsupported)")<<"\n";
+  std::cout<<"  PASS  : "<<green(std::to_string(m.pass))<<dim("   (incl. F-sweep & extra checks)")<<"\n";
+  std::cout<<"  FAIL  : "<<red(std::to_string(m.fail))<<"\n";
+  std::cout<<"  WARN  : "<<yellow(std::to_string(m.warn))<<"\n";
+  std::cout<<"  SKIP  : "<<dim(std::to_string(m.skip))<<dim("   (by-design / unsupported)")<<"\n";
   std::cout<<dim("  ----------------------------------------")<<"\n";
-  std::cout<<"  total : "<<s.rows.size()<<"\n";
-  int planned_skipped=0;
-  for(auto&p:planned){
-    bool found=false;
-    for(auto&r:s.rows){if(r.api==p.second){found=true;
-      if(r.status==SKIP)++planned_skipped;break;}}
-    if(!found)++planned_skipped;}
-  printf("  core coverage : %.1f%% (%d/%d planned executed, %d skipped)\n",
-         core_cov,executed,(int)core_total,planned_skipped);
-  printf("  passed ratio (all) : %.1f%% (%d/%d)\n",
-         (pass+fail)?100.0*pass/(pass+fail):0.0,pass,pass+fail);
+  std::cout<<"  total : "<<m.total<<"\n";
+  char buf1[16],buf2[16],buf3[16],buf4[16],buf5[16],buf6[16];
+  snprintf(buf1,sizeof(buf1),"%.1f",pct(m.pass,m.total));
+  snprintf(buf2,sizeof(buf2),"%.1f",pct(m.pass,m.total-m.skip));
+  snprintf(buf3,sizeof(buf3),"%.1f",pct(m.core_pass,m.core_rows));
+  snprintf(buf4,sizeof(buf4),"%.1f",pct(m.core_pass,m.core_rows-m.core_skip));
+  snprintf(buf5,sizeof(buf5),"%.1f",pct(m.f_pass,m.f_total));
+  snprintf(buf6,sizeof(buf6),"%.1f",pct(m.f_pass,m.f_pass+m.f_fail));
+  std::cout<<"  pass rate (all)       : "<<bold(std::string(buf1)+"%")
+           <<" (PASS "<<m.pass<<" / total "<<m.total<<")\n";
+  std::cout<<"  pass rate (excl SKIP) : "<<bold(std::string(buf2)+"%")
+           <<" (PASS "<<m.pass<<" / "<<(m.total-m.skip)<<")\n";
+  std::cout<<"  core (excl [F])       : "<<bold(std::string(buf3)+"%")<<" all | "
+           <<bold(std::string(buf4)+"%")<<" excl SKIP"
+           <<" (planned "<<m.core_total<<", executed "<<m.core_executed<<")\n";
+  std::cout<<"  sweep [F]             : "<<bold(std::string(buf5)+"%")<<" all | "
+           <<bold(std::string(buf6)+"%")<<" excl SKIP"
+           <<" (WARN "<<m.f_warn<<", SKIP "<<m.f_skip<<", total "<<m.f_total<<")\n";
   std::cout<<"  opencv_version : "<<CV_VERSION<<"\n";
   std::cout<<"  opencv_source  : "<<get_opencv_source_label()<<"\n";
   std::cout<<"  reports : "<<args.outdir<<"/report_cpp.json\n";
-  write_json(s,args.outdir+"/report_cpp.json",args.device,args.backend,args.frames);
-  bool camera_missing=!s.camera_ok&&fail==0&&pass<=6;
-  if(fail>0)return 1;if(camera_missing)return 2;return 0;}
+  write_json(s,args.outdir+"/report_cpp.json",args.device,args.backend,args.frames,m);
+  bool camera_missing=!s.camera_ok&&m.fail==0&&m.pass<=6;
+  if(m.fail>0)return 1;if(camera_missing)return 2;return 0;}

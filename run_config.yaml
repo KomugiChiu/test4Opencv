@@ -4,7 +4,7 @@ device: /dev/video0
 backend: V4L2
 report_dir: report
 opencv_extra_dir: .
-auto_impl: python
+auto_impl: both
 manual_impl: cpp
 combined_report: true
 official_console_output: false
