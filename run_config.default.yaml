@@ -1,0 +1,33 @@
+# Camera Toolkit run configuration
+# Used by run_camera_tests.py — CLI arguments always override these values.
+#
+# Path resolution: source_dir/<branch> and build_dir/<branch>
+#   e.g. source_dir=./opencv_source_code, branch=latest -> ./opencv_source_code/latest
+
+device: /dev/video0          # target camera node
+backend: V4L2                # ANY | V4L2 | GSTREAMER | FFMPEG
+auto_impl: both              # python | cpp | both
+manual_impl: both            # python | cpp | both
+report_dir: report           # reports go to <report_dir>/<timestamp>/
+opencv_extra_dir: .          # folder containing opencv_extra/testdata
+combined_report: true
+official_console_output: false  # true = stream gtest output live to console
+
+# C++ OpenCV source selection for auto_cpp / manual_cpp
+cpp:
+  source: apt                # apt | selfbuild
+  apt_package: libopencv-dev
+  source_dir: ./opencv_source_code  # base dir; actual clone = <source_dir>/<branch>
+  build_dir: ./build                # base dir; actual build = <build_dir>/<branch>
+  branch: latest             # 4.x | 5.x | latest
+
+# Official test suite (always selfbuild; shares or overrides paths)
+official_cpp:
+  source_dir: ./opencv_source_code  # base dir; actual clone = <source_dir>/<branch>
+  build_dir: ./build       # base dir; actual build = <build_dir>/<branch>
+  branch: latest                    # 4.x | 5.x | latest
+
+# Manual test parameters
+manual:
+  reconnect_window: 30       # USB unplug/reconnect test duration (seconds)
+  long_run: 0                # long duration stability run time (minutes); 0 = skip

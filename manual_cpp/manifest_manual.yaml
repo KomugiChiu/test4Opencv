@@ -1,0 +1,78 @@
+- test_ref: device_index_physical_mapping
+  description: 確認 OpenCV VideoCapture index / 裝置路徑，真的對應到你以為的那顆實體攝影機
+  related_apis:
+  - VideoCapture(source, apiPreference)
+  - VideoCapture.open()
+  steps:
+  - 執行 `v4l2-ctl --list-devices`，記下每顆實體攝影機底下有哪些 /dev/video* node
+  - 對每個候選 node 執行 `v4l2-ctl -d /dev/videoN --info`，確認 Device Caps 含 Video Capture（非
+    Metadata Capture）
+  - 用手遮住/移動要測試的那顆攝影機鏡頭，同時對候選 node 執行 `ffplay /dev/videoN` 或跑本專案的 read_consecutive
+    單項測試，確認畫面確實跟著變化
+  - 把確認過的正確 index/路徑記錄下來，更新到 ROS2 node 或本專案 TEST_CAMERA_SOURCE 設定中
+  why_manual: 同一顆 USB 攝影機常註冊出多個 /dev/video* node（capture + metadata），且哪個 index 對應哪顆實體攝影機屬於當下接線/系統狀態，無法從程式面自動判斷，需人眼確認畫面變化
+- test_ref: real_usb_unplug_reconnect
+  description: 驗證真實 USB 拔插情境下，ROS2 node/測試程式的斷線重連邏輯真的能恢復
+  related_apis:
+  - VideoCapture.read()
+  - VideoCapture.isOpened()
+  - VideoCapture.release()
+  - VideoCapture.open()
+  steps:
+  - 啟動長時間執行的 read_consecutive 迴圈或實際 ROS2 camera node
+  - 直接拔掉攝影機的 USB 線，觀察程式是否偵測到 read()/isOpened() 失敗（而非卡死或 crash）
+  - 等待 5-10 秒後重新插上 USB
+  - 確認程式的重連邏輯在合理時間內（依 max_retry * retry_interval 設定）恢復畫面串流
+  - 記錄：偵測到斷線耗時、恢復串流耗時、期間是否有例外或程式崩潰
+  why_manual: v4l2loopback 只能模擬 feeder process 停止（見 reconnect_v4l2loopback_feeder_kill
+    自動化項目），無法重現真實 USB 電氣層拔除、驅動重新枚舉裝置的行為，這件事只能在實體硬體上人工操作驗證
+- test_ref: exposure_visual_check
+  description: 目視確認 CAP_PROP_AUTO_EXPOSURE / CAP_PROP_EXPOSURE 切換後，畫面亮度是否真的隨之改變
+  related_apis:
+  - CAP_PROP_AUTO_EXPOSURE
+  - CAP_PROP_EXPOSURE
+  steps:
+  - 在光線穩定的環境下，先讓攝影機處於自動曝光模式，觀察畫面亮度是否合理
+  - 切到手動曝光模式（AUTO_EXPOSURE 設為驅動要求的手動值，見06篇提醒此語意因驅動而異），分別 set 幾組不同 EXPOSURE 數值
+  - 肉眼確認畫面亮度是否隨 EXPOSURE 數值增減而變化（而不是 set() 回傳 true 卻毫無視覺變化）
+  - 記錄哪些數值範圍有實際效果、set_get_exposure_group 自動化測試的 get() 回讀值是否與你肉眼看到的亮度變化方向一致
+  why_manual: 曝光是否真的改變是「畫面亮度」這種主觀視覺判斷，程式只能驗證 API 呼叫沒有 crash，無法自動判斷畫面亮度是否合理
+- test_ref: autofocus_visual_check
+  description: 目視確認 CAP_PROP_AUTOFOCUS / FOCUS / ZOOM / PAN / TILT 等機械相關屬性是否真的有物理動作
+  related_apis:
+  - CAP_PROP_AUTOFOCUS
+  - CAP_PROP_FOCUS
+  - CAP_PROP_ZOOM
+  - CAP_PROP_PAN
+  - CAP_PROP_TILT
+  - CAP_PROP_ROLL
+  - CAP_PROP_IRIS
+  steps:
+  - 若攝影機支援自動對焦，切換 CAP_PROP_AUTOFOCUS 開關，用不同距離的物體肉眼確認畫面是否重新對焦
+  - 若支援手動 FOCUS，set 不同數值，肉眼確認清晰度變化
+  - 若攝影機支援機械變焦/平移/俯仰(ZOOM/PAN/TILT)，set 不同數值，肉眼確認鏡頭/雲台是否真的移動
+  - 記錄實際支援的屬性與對應的物理反應，供 set_get_optional_props_soft 自動化測試結果比對（該測試只能證明 API 呼叫沒 crash，不能證明鏡頭真的動了）
+  why_manual: 多數消費級 UVC webcam 根本不具備這些機械功能，且「有沒有物理動作」只能用眼睛看，無法用程式自動驗證
+- test_ref: white_balance_visual_check
+  description: 目視確認白平衡相關屬性(WHITE_BALANCE_BLUE_U/RED_V, AUTO_WB, WB_TEMPERATURE)是否讓畫面色彩看起來正確
+  related_apis:
+  - CAP_PROP_WHITE_BALANCE_BLUE_U
+  - CAP_PROP_WHITE_BALANCE_RED_V
+  - CAP_PROP_AUTO_WB
+  - CAP_PROP_WB_TEMPERATURE
+  steps:
+  - 在已知色溫的光源下（例如日光燈、暖白光燈）觀察開啟 AUTO_WB 時畫面色彩是否自然（白色物體看起來是白的，不偏藍偏黃）
+  - 關閉 AUTO_WB，手動 set 幾組 WB_TEMPERATURE 數值，肉眼確認色調是否隨之改變
+  - 記錄哪些數值有效、色彩變化方向是否符合預期
+  why_manual: 色彩正確與否是主觀視覺判斷，且不同色溫光源下的「正確」定義不同，無法自動化
+- test_ref: long_duration_stability
+  description: 長時間（例如 24 小時以上）穩定性觀察，確認沒有記憶體洩漏、buffer 延遲累積、意外斷線等長跑才會浮現的問題
+  related_apis:
+  - VideoCapture.read()
+  - CAP_PROP_BUFFERSIZE
+  steps:
+  - 在目標 ROS2 node 或本專案的 read_consecutive 邏輯上，改成長時間迴圈執行（掛背景執行）
+  - 定期（例如每小時）記錄記憶體用量、read() 失敗率、畫面延遲估計值
+  - 執行完畢後人工檢視趨勢：記憶體是否持續上升、延遲是否隨時間惡化
+  - 記錄觀察期間發生的任何異常事件與發生時間點
+  why_manual: 多久算「夠長」、log 曲線是否代表異常，需要人工判讀，且此測試本質是觀察性質而非單次判定 PASS/FAIL
