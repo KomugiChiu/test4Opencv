@@ -4,3 +4,4 @@ build/
 opencv_source_code/
 opencv_extra/
 report/
+run_config.yaml
