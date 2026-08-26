@@ -348,6 +348,10 @@ def planned_check_items():
         ("A", "videoio_registry.getWriterBackends()"),
         ("A", "videoio_registry.isBackendBuiltIn()"),
         ("A", "videoio_registry.getCameraBackendPluginVersion()"),
+        ("A", "videoio_registry.getStreamBackendPluginVersion()"),
+        ("A", "videoio_registry.getWriterBackendPluginVersion()"),
+        ("A", "videoio_registry.getStreamBufferedBackends()"),
+        ("A", "videoio_registry.getStreamBufferedBackendPluginVersion()"),
         ("B", "VideoCapture(device, backend)"),
         ("B", "open()"),
         ("B", "isOpened()"),
@@ -490,6 +494,51 @@ def check_environment(s):
             s.add("A", "videoio_registry.getCameraBackendPluginVersion()",
                   SKIP, f"builtin backend has no plugin version ({res})")
 
+    # stream/writer variants: probe the first NON-builtin backend of the
+    # matching mode list (a plugin) instead of the selected device backend.
+    # Registered-but-unavailable factories (e.g. GSTREAMER without the
+    # runtime libs) are excluded via hasBackend().
+    fn_builtin = getattr(reg, "isBackendBuiltIn", None)
+    fn_has = getattr(reg, "hasBackend", None)
+    for fname, listname, label in (
+            ("getStreamBackendPluginVersion", "getStreamBackends",
+             "videoio_registry.getStreamBackendPluginVersion()"),
+            ("getWriterBackendPluginVersion", "getWriterBackends",
+             "videoio_registry.getWriterBackendPluginVersion()")):
+        fn = getattr(reg, fname, None)
+        lfn = getattr(reg, listname, None)
+        if fn is None or lfn is None:
+            s.add("A", label, SKIP, "not available in this cv2")
+            continue
+        try:
+            cands = list(lfn())
+        except Exception:
+            cands = []
+        hit = None
+        skipped_unavail = 0
+        for b in cands:
+            try:
+                if fn_builtin is not None and not fn_builtin(b):
+                    if fn_has is not None and not fn_has(b):
+                        skipped_unavail += 1
+                        continue
+                    hit = b
+                    break
+            except Exception:
+                continue
+        if hit is None:
+            s.add("A", label, SKIP,
+                  f"no available plugin backend in {listname}()"
+                  + (f" ({len(cands)} registered, {skipped_unavail} unavailable)"
+                     if cands else ""))
+            continue
+        name = reg.getBackendName(hit)
+        st, res = call_with_timeout(lambda fn=fn, hit=hit: fn(hit), 5)
+        if st == "ok":
+            s.add("A", label, PASS, f"{name} plugin={res}")
+        else:
+            s.add("A", label, WARN, f"{name} raised: {res}")
+
     if hasattr(reg, "hasBackend"):
         probe_name = want if want != "ANY" else ("V4L2" if sys.platform.startswith("linux") else "ANY")
         try:
@@ -501,6 +550,53 @@ def check_environment(s):
               f"hasBackend({probe_name})={has}")
     else:
         s.add("A", "videoio_registry.hasBackend()", SKIP, "not available in this cv2")
+
+    # [5.x] memory-buffer capture surface: VideoCapture(buffer) backends.
+    # Device-less capability -> not applicable under an explicit device
+    # backend such as V4L2.
+    if want == "V4L2":
+        s.add("A", "videoio_registry.getStreamBufferedBackends()", SKIP,
+              "not applicable: backend=V4L2 (memory-buffer capture)")
+        s.add("A", "videoio_registry.getStreamBufferedBackendPluginVersion()",
+              SKIP, "not applicable: backend=V4L2 (memory-buffer capture)")
+        return
+
+    sb_api = "videoio_registry.getStreamBufferedBackends()"
+    fn_sb = getattr(reg, "getStreamBufferedBackends", None)
+    ids = []
+    if fn_sb is None:
+        s.add("A", sb_api, SKIP, "not available in this cv2 (<5.x)")
+    else:
+        try:
+            ids = list(fn_sb())
+            names = [reg.getBackendName(b) for b in ids]
+            s.add("A", sb_api, PASS if names else WARN,
+                  ", ".join(names) or "empty list")
+        except Exception as e:
+            s.add("A", sb_api, FAIL, f"raised: {e}")
+
+    pv_api = "videoio_registry.getStreamBufferedBackendPluginVersion()"
+    fn_pv = getattr(reg, "getStreamBufferedBackendPluginVersion", None)
+    plugin_hit = None
+    fn_builtin = getattr(reg, "isBackendBuiltIn", None)
+    for b in ids:
+        try:
+            if fn_builtin is not None and not fn_builtin(b):
+                plugin_hit = b
+                break
+        except Exception:
+            continue
+    if fn_pv is None or plugin_hit is None:
+        s.add("A", pv_api, SKIP,
+              "no plugin backend in buffer-capture list"
+              + (f" ({len(ids)} builtin)" if ids else ""))
+    else:
+        st, res = call_with_timeout(lambda: fn_pv(plugin_hit), 5)
+        name = reg.getBackendName(plugin_hit)
+        if st == "ok":
+            s.add("A", pv_api, PASS, f"{name} plugin={res}")
+        else:
+            s.add("A", pv_api, WARN, f"{name} raised: {res}")
 
 
 def device_node_missing(args):

@@ -70,6 +70,8 @@ std::vector<std::pair<char,std::string>> planned_items(){
   std::vector<std::pair<char,std::string>>v={
     {'A',"OpenCV version"},{'A',"build: V4L support"},{'A',"build: GStreamer support"},
     {'A',"registry.getBackends()"},{'A',"registry.getBackendName()"},{'A',"registry.hasBackend(target)"},
+    {'A',"registry.getStreamBufferedBackends()"},{'A',"registry.getStreamBufferedBackendPluginVersion()"},
+    {'A',"registry.getStreamBackendPluginVersion()"},{'A',"registry.getWriterBackendPluginVersion()"},
     {'B',"VideoCapture(device, backend)"},{'B',"open()"},{'B',"isOpened()"},{'B',"getBackendName()"},
     {'B',"exception mode toggle"},{'B',"waitAny()"},{'B',"negative open case"},
     {'B',"open-only params precheck"},{'B',"backend ANY vs V4L2"},
@@ -119,6 +121,54 @@ void env_check(Suite&s,const std::string&backend){
     else s.add("A","registry.getBackendName()",SKIP,"no backends");
     int target=backend_id(backend=="ANY"?"V4L2":backend);
     s.add("A","registry.hasBackend(target)",cv::videoio_registry::hasBackend(api_cast(target))?PASS:WARN,"target="+(backend=="ANY"?std::string("V4L2"):backend));
+#if CV_VERSION_MAJOR >= 5
+    // [5.x] memory-buffer capture surface: VideoCapture(buffer) backends.
+    // Device-less capability -> not applicable under an explicit device
+    // backend such as V4L2.
+    if(backend=="V4L2"){
+      s.add("A","registry.getStreamBufferedBackends()",SKIP,"not applicable: backend=V4L2 (memory-buffer capture)");
+      s.add("A","registry.getStreamBufferedBackendPluginVersion()",SKIP,"not applicable: backend=V4L2 (memory-buffer capture)");
+    }else{
+      auto sb=cv::videoio_registry::getStreamBufferedBackends();std::string sbnames;
+      for(auto id:sb)sbnames+=(sbnames.empty()?"":", ")+cv::videoio_registry::getBackendName(id);
+      s.add("A","registry.getStreamBufferedBackends()",sbnames.empty()?WARN:PASS,sbnames.empty()?"empty list":sbnames);
+      int plugin_hit=-1;
+      for(auto id:sb)
+        if(!cv::videoio_registry::isBackendBuiltIn(api_cast(id))){plugin_hit=(int)id;break;}
+      if(plugin_hit<0)
+        s.add("A","registry.getStreamBufferedBackendPluginVersion()",SKIP,
+              "no plugin backend in buffer-capture list"+(sb.empty()?std::string():std::string(" ("+std::to_string(sb.size())+" builtin)")));
+      else{
+        int vabi=0,vapi=0;
+        std::string desc=cv::videoio_registry::getStreamBufferedBackendPluginVersion(api_cast(plugin_hit),vabi,vapi);
+        s.add("A","registry.getStreamBufferedBackendPluginVersion()",PASS,
+              cv::videoio_registry::getBackendName(api_cast(plugin_hit))+" plugin="+desc);}
+    }
+    // stream/writer plugin-version variants: registry info queries,
+    // independent of the selected backend -> run under any backend.
+    {
+      auto first_plugin=[](const std::vector<cv::VideoCaptureAPIs>&ids)->int{
+        for(auto id:ids){
+          if(!cv::videoio_registry::isBackendBuiltIn(api_cast(id))
+             &&cv::videoio_registry::hasBackend(api_cast(id)))
+            return (int)id;}
+        return -1;};
+      auto report_pv=[&](const char*label,int hit,
+                         std::string(*fn)(cv::VideoCaptureAPIs,int&,int&)){
+        if(hit<0){s.add("A",label,SKIP,"no available plugin backend");return;}
+        int vabi=0,vapi=0;
+        try{std::string d=fn(api_cast(hit),vabi,vapi);
+          s.add("A",label,PASS,cv::videoio_registry::getBackendName(api_cast(hit))+" plugin="+d);}
+        catch(const std::exception&e){
+          s.add("A",label,WARN,cv::videoio_registry::getBackendName(api_cast(hit))+" raised: "+e.what());}};
+      {auto ids=cv::videoio_registry::getStreamBackends();
+       report_pv("registry.getStreamBackendPluginVersion()",first_plugin(ids),
+                 &cv::videoio_registry::getStreamBackendPluginVersion);}
+      {auto ids=cv::videoio_registry::getWriterBackends();
+       report_pv("registry.getWriterBackendPluginVersion()",first_plugin(ids),
+                 &cv::videoio_registry::getWriterBackendPluginVersion);}
+    }
+#endif
   }catch(const std::exception&e){s.add("A","registry.*",FAIL,e.what());}
 }
 void capture_extras(Suite&s){
