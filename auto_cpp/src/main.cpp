@@ -77,7 +77,8 @@ std::vector<std::pair<char,std::string>> planned_items(){
     {'B',"VideoCapture(device, backend)"},{'B',"open()"},{'B',"isOpened()"},{'B',"getBackendName()"},
     {'B',"exception mode toggle"},{'B',"waitAny()"},{'B',"negative open case"},
     {'B',"open-only params precheck"},{'B',"backend ANY vs V4L2"},
-    {'B',"grab()"},{'B',"retrieve()"},{'B',"read loop"},{'B',"operator>>"},{'B',"release()"}};
+    {'B',"grab()"},{'B',"retrieve()"},{'B',"read loop"},{'B',"operator>>"},{'B',"release()"},
+    {'B',"open(String filename, apiPreference)"},{'B',"open(int,api,params)"},{'B',"open(String,api,params)"},{'B',"open(IStreamReader,api,params)"}};
   for(const char*n:{"FRAME_WIDTH","FRAME_HEIGHT","FPS","FOURCC","BUFFERSIZE","AUTO_EXPOSURE","EXPOSURE","GAIN","FORMAT","MODE","CONVERT_RGB"})
     v.push_back({'C',std::string("CAP_PROP_")+n+" get/set"});
   for(const char*n:{"frame not None","frame dimensions","pixel variance","freeze detection"})v.push_back({'D',n});
@@ -85,6 +86,8 @@ std::vector<std::pair<char,std::string>> planned_items(){
   v.push_back({'E',"writer.isOpened()"});v.push_back({'E',"writer.getBackendName()"});
   v.push_back({'E',"writer.get(VIDEOWRITER_PROP_*)"});v.push_back({'E',"writer.set(VIDEOWRITER_PROP_*)"});
   v.push_back({'E',"writer.write()"});v.push_back({'E',"operator<<"});v.push_back({'E',"writer.release()"});v.push_back({'E',"VideoWriter readback"});
+  v.push_back({'E',"VideoWriter with apiPreference"});v.push_back({'E',"VideoWriter with params"});v.push_back({'E',"VideoWriter with apiPreference+params"});
+  v.push_back({'E',"open(String,apiPreference)"});v.push_back({'E',"open(String,fourcc,fps,Size,params)"});v.push_back({'E',"open(String,api,fourcc,fps,Size,params)"});
   v.push_back({'E',"VIDEOWRITER_PROP_* inventory"});v.push_back({'F',"CAP_PROP_* full sweep"});
   v.push_back({'G',"negotiated fmt within v4l2-ctl advertised list"});
   return v;
@@ -402,6 +405,118 @@ void test_writer(Suite&s,const std::string&outdir){
   s.add("E","writer.release()",!writer.isOpened()?PASS:WARN,"");
   VideoCapture back(path);Mat decoded;bool ok=back.isOpened()&&back.read(decoded);back.release();
   s.add("E","VideoWriter readback",ok?PASS:FAIL,ok?("decoded "+std::to_string(decoded.cols)+"x"+std::to_string(decoded.rows)):"decode failed");}
+void test_capture_open_overloads(Suite&s,const std::string&device,const std::string&outdir){
+  // Sample file from previous writer test
+  std::string sample = outdir+"/writer_cpp_test.avi";
+  struct stat st; bool sample_exists = (stat(sample.c_str(),&st)==0 && st.st_size>0);
+  if(!sample_exists){
+    // fallback: try any writer file
+    sample = outdir+"/writer_test.avi";
+    sample_exists = (stat(sample.c_str(),&st)==0 && st.st_size>0);
+  }
+  // 1) open(String filename, apiPreference) — explicit open
+  try{
+    if(!sample_exists) s.add("B","open(String filename, apiPreference)",SKIP,"no sample file (writer not created)");
+    else{
+      VideoCapture cap; bool opened=false;
+      try{ opened = cap.open(sample, cv::CAP_FFMPEG); }catch(...){ opened=false; }
+      bool isOpen = false; try{ isOpen = cap.isOpened(); }catch(...){}
+      s.add("B","open(String filename, apiPreference)", (opened&&isOpen)?PASS:WARN, sample+(isOpen?" opened":" not opened"));
+      // also test constructor overload
+      try{ VideoCapture cap2(sample, cv::CAP_FFMPEG); s.add("B","open(String filename, apiPreference)", cap2.isOpened()?PASS:WARN,"via ctor "+sample); cap2.release(); }catch(const std::exception&e){ s.add("B","open(String filename, apiPreference)",WARN,std::string("ctor raised: ")+e.what()); }
+      cap.release();
+    }
+  }catch(const std::exception&e){ s.add("B","open(String filename, apiPreference)",WARN,std::string("raised: ")+e.what()); }
+  // 2) open(String, api, params) — vector<int> params
+  try{
+    if(!sample_exists) s.add("B","open(String,api,params)",SKIP,"no sample file");
+    else{
+      std::vector<int> params = {cv::CAP_PROP_OPEN_TIMEOUT_MSEC, 5000};
+      VideoCapture cap; bool opened=false;
+      try{ opened = cap.open(sample, cv::CAP_FFMPEG, params); }catch(...){ opened=false; }
+      s.add("B","open(String,api,params)", (opened&&cap.isOpened())?PASS:WARN, "params OPEN_TIMEOUT_MSEC=5000");
+      cap.release();
+    }
+  }catch(const std::exception&e){ s.add("B","open(String,api,params)",WARN,std::string("raised: ")+e.what()); }
+  // 3) open(int, api, params) — device with params
+  try{
+    std::vector<int> params = {cv::CAP_PROP_READ_TIMEOUT_MSEC, 5000};
+    VideoCapture cap; bool opened=false;
+    try{
+      if(device.find_first_not_of("0123456789")==std::string::npos) opened = cap.open(std::stoi(device), cv::CAP_V4L2, params);
+      else opened = cap.open(device, cv::CAP_V4L2, params);
+    }catch(...){ opened=false; }
+    s.add("B","open(int,api,params)", (opened&&cap.isOpened())?PASS:WARN, "params READ_TIMEOUT_MSEC=5000");
+    cap.release();
+  }catch(const std::exception&e){ s.add("B","open(int,api,params)",WARN,std::string("raised: ")+e.what()); }
+  // 4) open(IStreamReader, api, params) — memory stream
+#if CV_VERSION_MAJOR >= 4
+  try{
+    if(!sample_exists) s.add("B","open(IStreamReader,api,params)",SKIP,"no sample file for MemReader");
+    else{
+      struct MemReader : public cv::IStreamReader{
+        std::vector<char> data; size_t pos=0;
+        explicit MemReader(const std::string& p){ std::ifstream f(p,std::ios::binary); if(f) data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()); }
+        long long read(char* buf, long long sz) override{
+          long long rem = (long long)data.size()-(long long)pos; long long n = std::min(sz, rem); if(n<=0) return 0; memcpy(buf, data.data()+pos, (size_t)n); pos+=n; return n;
+        }
+        long long seek(long long off, int org) override{
+          size_t np=0; if(org==SEEK_SET) np = (size_t)off; else if(org==SEEK_CUR) np = pos + (size_t)off; else if(org==SEEK_END) np = data.size() + (size_t)off; else return -1; if(np>data.size()) return -1; pos=np; return (long long)pos;
+        }
+      };
+      auto reader = cv::makePtr<MemReader>(sample);
+      if(reader->data.empty()){
+        s.add("B","open(IStreamReader,api,params)",SKIP,"MemReader empty");
+      }else{
+        // ctor overload
+        bool ctor_ok=false, open_ok=false;
+        try{ VideoCapture c2(reader, cv::CAP_FFMPEG, std::vector<int>{}); ctor_ok = c2.isOpened(); if(ctor_ok){ Mat f; ctor_ok = c2.read(f) && !f.empty(); } c2.release(); }catch(...){ ctor_ok=false; }
+        s.add("B","open(IStreamReader,api,params)", ctor_ok?PASS:WARN, ctor_ok?"via ctor+read":"ctor open/read failed (buffer/FFMPEG may not support)");
+        // open overload
+        try{ VideoCapture cap; std::vector<int> p; open_ok = cap.open(reader, cv::CAP_FFMPEG, p); if(open_ok) open_ok = cap.isOpened(); cap.release(); }catch(...){ open_ok=false; }
+        // report open separately if ctor already reported, use same api name (dedup handled)
+        if(!ctor_ok) s.add("B","open(IStreamReader,api,params)", open_ok?PASS:WARN, open_ok?"via open()":"open() failed");
+      }
+    }
+  }catch(const std::exception&e){ s.add("B","open(IStreamReader,api,params)",WARN,std::string("raised: ")+e.what()); }
+#else
+  s.add("B","open(IStreamReader,api,params)",SKIP,"IStreamReader requires OpenCV >=4");
+#endif
+}
+void test_writer_overloads(Suite&s,const std::string&outdir){
+  Mat frame = synthetic_frame(640,480,0);
+  // 1) VideoWriter with apiPreference
+  try{
+    std::string p = outdir+"/writer_api_test.avi";
+    VideoWriter w(p, cv::CAP_FFMPEG, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), true);
+    bool ok = w.isOpened(); if(ok){ w.write(frame); w.release(); s.add("E","VideoWriter with apiPreference",PASS,p+" CAP_FFMPEG"); }
+    else s.add("E","VideoWriter with apiPreference",WARN,"isOpened false "+p);
+    // also test open() with apiPreference
+    VideoWriter w2; bool ok2 = w2.open(p, cv::CAP_FFMPEG, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), true);
+    s.add("E","open(String,apiPreference)", ok2&&w2.isOpened()?PASS:WARN, ok2?"open apiPreference OK":"open apiPreference failed"); if(w2.isOpened()){ w2.write(frame); w2.release(); }
+  }catch(const std::exception&e){ s.add("E","VideoWriter with apiPreference",WARN,std::string("raised: ")+e.what()); s.add("E","open(String,apiPreference)",WARN,std::string("raised: ")+e.what()); }
+  // 2) VideoWriter with params
+  try{
+    std::string p = outdir+"/writer_params_test.avi";
+    std::vector<int> params = {cv::VIDEOWRITER_PROP_QUALITY, 90};
+    VideoWriter w(p, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), params);
+    bool ok = w.isOpened(); if(ok){ w.write(frame); w.release(); s.add("E","VideoWriter with params",PASS,"QUALITY=90"); }
+    else s.add("E","VideoWriter with params",WARN,"isOpened false "+p);
+    // open with params
+    VideoWriter w2; bool ok2 = w2.open(p, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), params);
+    s.add("E","open(String,fourcc,fps,Size,params)", ok2&&w2.isOpened()?PASS:WARN, ok2?"open params OK":"open params failed"); if(w2.isOpened()){ w2.write(frame); w2.release(); }
+  }catch(const std::exception&e){ s.add("E","VideoWriter with params",WARN,std::string("raised: ")+e.what()); s.add("E","open(String,fourcc,fps,Size,params)",WARN,std::string("raised: ")+e.what()); }
+  // 3) VideoWriter with apiPreference+params
+  try{
+    std::string p = outdir+"/writer_api_params_test.avi";
+    std::vector<int> params = {cv::VIDEOWRITER_PROP_QUALITY, 90};
+    VideoWriter w(p, cv::CAP_FFMPEG, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), params);
+    bool ok = w.isOpened(); if(ok){ w.write(frame); w.release(); s.add("E","VideoWriter with apiPreference+params",PASS,"api+QUALITY"); }
+    else s.add("E","VideoWriter with apiPreference+params",WARN,"isOpened false "+p);
+    VideoWriter w2; bool ok2 = w2.open(p, cv::CAP_FFMPEG, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), params);
+    s.add("E","open(String,api,fourcc,fps,Size,params)", ok2&&w2.isOpened()?PASS:WARN, ok2?"open api+params OK":"open api+params failed"); if(w2.isOpened()){ w2.write(frame); w2.release(); }
+  }catch(const std::exception&e){ s.add("E","VideoWriter with apiPreference+params",WARN,std::string("raised: ")+e.what()); s.add("E","open(String,api,fourcc,fps,Size,params)",WARN,std::string("raised: ")+e.what()); }
+}
 static std::map<std::string,std::string>CAP_TO_V4L2={
   {"BRIGHTNESS","brightness"},{"CONTRAST","contrast"},{"SATURATION","saturation"},
   {"HUE","hue"},{"GAIN","gain"},{"EXPOSURE","exposure_absolute"},
@@ -622,6 +737,8 @@ int main(int argc,char**argv){
   if(!opened)skip_rest(s,"camera failed to open");
   else{capture_extras(s);test_properties(s);lifecycle_reads(s,args.frames);frame_quality(s);
     v4l2_crosscheck(s,args.device);os_mkdir(args.outdir);test_writer(s,args.outdir);
+    test_capture_open_overloads(s,args.device,args.outdir);
+    test_writer_overloads(s,args.outdir);
     // [F] must run while the capture is still open: get()/set() on a
     // released cap returns -1 and poisons the whole sweep.
     if(!args.no_full_sweep)test_full_sweep(s,args.backend,args.device);
