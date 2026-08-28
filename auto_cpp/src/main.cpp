@@ -498,9 +498,9 @@ void test_writer_overloads(Suite&s,const std::string&outdir){
   // 2) VideoWriter with params
   try{
     std::string p = outdir+"/writer_params_test.avi";
-    std::vector<int> params = {cv::VIDEOWRITER_PROP_QUALITY, 90};
+    std::vector<int> params = {cv::VIDEOWRITER_PROP_IS_COLOR, 1};
     VideoWriter w(p, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), params);
-    bool ok = w.isOpened(); if(ok){ w.write(frame); w.release(); s.add("E","VideoWriter with params",PASS,"QUALITY=90"); }
+    bool ok = w.isOpened(); if(ok){ w.write(frame); w.release(); s.add("E","VideoWriter with params",PASS,"IS_COLOR=1"); }
     else s.add("E","VideoWriter with params",WARN,"isOpened false "+p);
     // open with params
     VideoWriter w2; bool ok2 = w2.open(p, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), params);
@@ -509,9 +509,9 @@ void test_writer_overloads(Suite&s,const std::string&outdir){
   // 3) VideoWriter with apiPreference+params
   try{
     std::string p = outdir+"/writer_api_params_test.avi";
-    std::vector<int> params = {cv::VIDEOWRITER_PROP_QUALITY, 90};
+    std::vector<int> params = {cv::VIDEOWRITER_PROP_IS_COLOR, 1};
     VideoWriter w(p, cv::CAP_FFMPEG, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), params);
-    bool ok = w.isOpened(); if(ok){ w.write(frame); w.release(); s.add("E","VideoWriter with apiPreference+params",PASS,"api+QUALITY"); }
+    bool ok = w.isOpened(); if(ok){ w.write(frame); w.release(); s.add("E","VideoWriter with apiPreference+params",PASS,"api+IS_COLOR=1"); }
     else s.add("E","VideoWriter with apiPreference+params",WARN,"isOpened false "+p);
     VideoWriter w2; bool ok2 = w2.open(p, cv::CAP_FFMPEG, cv::VideoWriter::fourcc('M','J','P','G'), 30.0, cv::Size(640,480), params);
     s.add("E","open(String,api,fourcc,fps,Size,params)", ok2&&w2.isOpened()?PASS:WARN, ok2?"open api+params OK":"open api+params failed"); if(w2.isOpened()){ w2.write(frame); w2.release(); }

@@ -81,6 +81,12 @@ E_WRITER_APIS = [
     "writer.write()",
     "writer.release()",
     "VideoWriter readback",
+    "VideoWriter with apiPreference",
+    "VideoWriter with params",
+    "VideoWriter with apiPreference+params",
+    "open(String,apiPreference)",
+    "open(String,fourcc,fps,Size,params)",
+    "open(String,api,fourcc,fps,Size,params)",
 ]
 
 PROP_BACKEND_FAMILIES = [
@@ -1035,6 +1041,74 @@ def test_writer(s):
     fb = safe_get(writer, framebytes_pid)
     evidence = f"{written} frames written" + (f", FRAMEBYTES={fb}" if fb else "")
     s.add("E", "writer.write()", PASS if written == len(sample) else FAIL, evidence)
+
+    # --- overloads with apiPreference / params (IS_COLOR) ---
+    frame0 = sample[0] if sample else np.zeros((h, w, 3), dtype=np.uint8)
+    # VideoWriter with apiPreference
+    try:
+        p_api = os.path.join(outdir, "writer_api_test.avi")
+        w_api = cv2.VideoWriter(p_api, cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h))
+        ok = w_api.isOpened()
+        if ok:
+            w_api.write(frame0)
+            w_api.release()
+            s.add("E", "VideoWriter with apiPreference", PASS, f"{p_api} CAP_FFMPEG")
+        else:
+            w_api.release()
+            s.add("E", "VideoWriter with apiPreference", WARN, "isOpened false")
+        w2 = cv2.VideoWriter()
+        ok2 = w2.open(p_api, cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h))
+        s.add("E", "open(String,apiPreference)", PASS if ok2 and w2.isOpened() else WARN, "open apiPreference OK" if ok2 else "open apiPreference failed")
+        if w2.isOpened():
+            w2.write(frame0)
+            w2.release()
+    except Exception as e:
+        s.add("E", "VideoWriter with apiPreference", WARN, f"raised: {e}")
+        s.add("E", "open(String,apiPreference)", WARN, f"raised: {e}")
+    # VideoWriter with params (IS_COLOR)
+    try:
+        p_prm = os.path.join(outdir, "writer_params_test.avi")
+        prm = [cv2.VIDEOWRITER_PROP_IS_COLOR, 1]
+        w_prm = cv2.VideoWriter(p_prm, cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h), prm)
+        ok = w_prm.isOpened()
+        if ok:
+            w_prm.write(frame0)
+            w_prm.release()
+            s.add("E", "VideoWriter with params", PASS, "IS_COLOR=1")
+        else:
+            w_prm.release()
+            s.add("E", "VideoWriter with params", WARN, "isOpened false")
+        w2 = cv2.VideoWriter()
+        ok2 = w2.open(p_prm, cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h), prm)
+        s.add("E", "open(String,fourcc,fps,Size,params)", PASS if ok2 and w2.isOpened() else WARN, "open params OK" if ok2 else "open params failed")
+        if w2.isOpened():
+            w2.write(frame0)
+            w2.release()
+    except Exception as e:
+        s.add("E", "VideoWriter with params", WARN, f"raised: {e}")
+        s.add("E", "open(String,fourcc,fps,Size,params)", WARN, f"raised: {e}")
+    # VideoWriter with apiPreference+params
+    try:
+        p_both = os.path.join(outdir, "writer_api_params_test.avi")
+        prm = [cv2.VIDEOWRITER_PROP_IS_COLOR, 1]
+        w_both = cv2.VideoWriter(p_both, cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h), prm)
+        ok = w_both.isOpened()
+        if ok:
+            w_both.write(frame0)
+            w_both.release()
+            s.add("E", "VideoWriter with apiPreference+params", PASS, "api+IS_COLOR=1")
+        else:
+            w_both.release()
+            s.add("E", "VideoWriter with apiPreference+params", WARN, "isOpened false")
+        w2 = cv2.VideoWriter()
+        ok2 = w2.open(p_both, cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h), prm)
+        s.add("E", "open(String,api,fourcc,fps,Size,params)", PASS if ok2 and w2.isOpened() else WARN, "open api+params OK" if ok2 else "open api+params failed")
+        if w2.isOpened():
+            w2.write(frame0)
+            w2.release()
+    except Exception as e:
+        s.add("E", "VideoWriter with apiPreference+params", WARN, f"raised: {e}")
+        s.add("E", "open(String,api,fourcc,fps,Size,params)", WARN, f"raised: {e}")
 
     writer.release()
     closed = not writer.isOpened()
