@@ -70,19 +70,21 @@ std::vector<std::pair<char,std::string>> planned_items(){
   std::vector<std::pair<char,std::string>>v={
     {'A',"OpenCV version"},{'A',"build: V4L support"},{'A',"build: GStreamer support"},
     {'A',"registry.getBackends()"},{'A',"registry.getBackendName()"},{'A',"registry.hasBackend(target)"},
-    {'A',"registry.getStreamBufferedBackends()"},{'A',"registry.getStreamBufferedBackendPluginVersion()"},
+    {'A',"registry.getCameraBackends()"},{'A',"registry.getStreamBackends()"},{'A',"registry.getWriterBackends()"},
+    {'A',"registry.isBackendBuiltIn()"},{'A',"registry.getCameraBackendPluginVersion()"},
     {'A',"registry.getStreamBackendPluginVersion()"},{'A',"registry.getWriterBackendPluginVersion()"},
+    {'A',"registry.getStreamBufferedBackends()"},{'A',"registry.getStreamBufferedBackendPluginVersion()"},
     {'B',"VideoCapture(device, backend)"},{'B',"open()"},{'B',"isOpened()"},{'B',"getBackendName()"},
     {'B',"exception mode toggle"},{'B',"waitAny()"},{'B',"negative open case"},
     {'B',"open-only params precheck"},{'B',"backend ANY vs V4L2"},
-    {'B',"grab()"},{'B',"retrieve()"},{'B',"read loop"},{'B',"release()"}};
+    {'B',"grab()"},{'B',"retrieve()"},{'B',"read loop"},{'B',"operator>>"},{'B',"release()"}};
   for(const char*n:{"FRAME_WIDTH","FRAME_HEIGHT","FPS","FOURCC","BUFFERSIZE","AUTO_EXPOSURE","EXPOSURE","GAIN","FORMAT","MODE","CONVERT_RGB"})
     v.push_back({'C',std::string("CAP_PROP_")+n+" get/set"});
   for(const char*n:{"frame not None","frame dimensions","pixel variance","freeze detection"})v.push_back({'D',n});
   v.push_back({'E',"VideoWriter.fourcc()"});v.push_back({'E',"VideoWriter(path, fourcc, fps, size)"});
   v.push_back({'E',"writer.isOpened()"});v.push_back({'E',"writer.getBackendName()"});
   v.push_back({'E',"writer.get(VIDEOWRITER_PROP_*)"});v.push_back({'E',"writer.set(VIDEOWRITER_PROP_*)"});
-  v.push_back({'E',"writer.write()"});v.push_back({'E',"writer.release()"});v.push_back({'E',"VideoWriter readback"});
+  v.push_back({'E',"writer.write()"});v.push_back({'E',"operator<<"});v.push_back({'E',"writer.release()"});v.push_back({'E',"VideoWriter readback"});
   v.push_back({'E',"VIDEOWRITER_PROP_* inventory"});v.push_back({'F',"CAP_PROP_* full sweep"});
   v.push_back({'G',"negotiated fmt within v4l2-ctl advertised list"});
   return v;
@@ -121,6 +123,20 @@ void env_check(Suite&s,const std::string&backend){
     else s.add("A","registry.getBackendName()",SKIP,"no backends");
     int target=backend_id(backend=="ANY"?"V4L2":backend);
     s.add("A","registry.hasBackend(target)",cv::videoio_registry::hasBackend(api_cast(target))?PASS:WARN,"target="+(backend=="ANY"?std::string("V4L2"):backend));
+    // [A] camera/stream/writer backends list + isBackendBuiltIn
+    try{
+      auto cids=cv::videoio_registry::getCameraBackends(); std::string cnames;
+      for(auto id:cids) cnames+=(cnames.empty()?"":", ")+cv::videoio_registry::getBackendName(id);
+      s.add("A","registry.getCameraBackends()",cnames.empty()?WARN:PASS,cnames.empty()?"empty list":cnames);
+      auto sids=cv::videoio_registry::getStreamBackends(); std::string snames;
+      for(auto id:sids) snames+=(snames.empty()?"":", ")+cv::videoio_registry::getBackendName(id);
+      s.add("A","registry.getStreamBackends()",snames.empty()?WARN:PASS,snames.empty()?"empty list":snames);
+      auto wids=cv::videoio_registry::getWriterBackends(); std::string wnames;
+      for(auto id:wids) wnames+=(wnames.empty()?"":", ")+cv::videoio_registry::getBackendName(id);
+      s.add("A","registry.getWriterBackends()",wnames.empty()?WARN:PASS,wnames.empty()?"empty list":wnames);
+      bool bi=cv::videoio_registry::isBackendBuiltIn(api_cast(target));
+      s.add("A","registry.isBackendBuiltIn()",PASS,std::string(backend=="ANY"?"V4L2":backend)+(bi?" builtIn":" plugin"));
+    }catch(const std::exception&e){ s.add("A","registry.getCameraBackends()",WARN,std::string("raised: ")+e.what()); }
 #if CV_VERSION_MAJOR >= 5
     // [5.x] memory-buffer capture surface: VideoCapture(buffer) backends.
     // Device-less capability -> not applicable under an explicit device
@@ -161,6 +177,9 @@ void env_check(Suite&s,const std::string&backend){
           s.add("A",label,PASS,cv::videoio_registry::getBackendName(api_cast(hit))+" plugin="+d);}
         catch(const std::exception&e){
           s.add("A",label,WARN,cv::videoio_registry::getBackendName(api_cast(hit))+" raised: "+e.what());}};
+      {auto ids=cv::videoio_registry::getCameraBackends();
+       report_pv("registry.getCameraBackendPluginVersion()",first_plugin(ids),
+                 &cv::videoio_registry::getCameraBackendPluginVersion);}
       {auto ids=cv::videoio_registry::getStreamBackends();
        report_pv("registry.getStreamBackendPluginVersion()",first_plugin(ids),
                  &cv::videoio_registry::getStreamBackendPluginVersion);}
@@ -276,7 +295,16 @@ void lifecycle_reads(Suite&s,int frames_wanted){
   s.measured_fps=sec>0?ok_count/sec:0.0;s.ok_read=ok_count;s.total_read=frames_wanted;
   double rate=frames_wanted?(double)ok_count/frames_wanted:0;
   s.add("B","read loop",rate==1.0?PASS:(rate>=0.8?WARN:FAIL),
-        std::to_string(ok_count)+"/"+std::to_string(frames_wanted)+" frames, "+std::to_string(s.measured_fps).substr(0,5)+" FPS");}
+        std::to_string(ok_count)+"/"+std::to_string(frames_wanted)+" frames, "+std::to_string(s.measured_fps).substr(0,5)+" FPS");
+  // operator>> (Mat) — syntax sugar for read()
+  try{
+    Mat op; s.cap >> op;
+    bool ok = !op.empty();
+    s.add("B","operator>>", ok?PASS:WARN, ok?("frame "+std::to_string(op.cols)+"x"+std::to_string(op.rows)):"empty (operator>> returned no frame)");
+    if(ok && s.frames.empty()) s.frames.push_back(op.clone());
+  }catch(const std::exception&e){ s.add("B","operator>>",WARN,std::string("raised: ")+e.what()); }
+  catch(...){ s.add("B","operator>>",WARN,"raised unknown"); }
+}
 void frame_quality(Suite&s){
   auto&fs=s.frames;
   if(fs.empty()){s.add("D","frame not None",FAIL,"no frames");s.add("D","frame dimensions",SKIP,"no frames");
@@ -344,7 +372,7 @@ void test_writer(Suite&s,const std::string&outdir){
     writer.open(path,cv::VideoWriter::fourcc(cand.fourcc[0],cand.fourcc[1],cand.fourcc[2],cand.fourcc[3]),30.0,cv::Size(640,480));
     if(writer.isOpened()){used=cand.fourcc;break;}writer.release();}
   if(!writer.isOpened()){for(const char*api:{"VideoWriter(path, fourcc, fps, size)","writer.isOpened()","writer.getBackendName()",
-    "writer.get(VIDEOWRITER_PROP_*)","writer.set(VIDEOWRITER_PROP_*)","writer.write()","writer.release()","VideoWriter readback","VIDEOWRITER_PROP_* inventory"})
+    "writer.get(VIDEOWRITER_PROP_*)","writer.set(VIDEOWRITER_PROP_*)","writer.write()","operator<<","writer.release()","VideoWriter readback","VIDEOWRITER_PROP_* inventory"})
     s.add("E",api,SKIP,"no usable encoder");return;}
   s.add("E","VideoWriter(path, fourcc, fps, size)",PASS,"fourcc="+used);
   s.add("E","writer.isOpened()",writer.isOpened()?PASS:FAIL,"");
@@ -362,6 +390,14 @@ void test_writer(Suite&s,const std::string&outdir){
   int written=0;for(auto&f:s.frames)writer.write(f);
   written=(int)s.frames.size();
   s.add("E","writer.write()",written>0?PASS:FAIL,std::to_string(written)+" frames written");
+  // operator<< — syntax sugar for write()
+  try{
+    Mat extra = synthetic_frame(640,480, written % 256);
+    writer << extra;
+    s.add("E","operator<<",PASS,"via << synthetic frame");
+    ++written;
+  }catch(const std::exception&e){ s.add("E","operator<<",WARN,std::string("raised: ")+e.what()); }
+  catch(...){ s.add("E","operator<<",WARN,"raised unknown"); }
   writer.release();
   s.add("E","writer.release()",!writer.isOpened()?PASS:WARN,"");
   VideoCapture back(path);Mat decoded;bool ok=back.isOpened()&&back.read(decoded);back.release();
