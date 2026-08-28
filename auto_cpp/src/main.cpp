@@ -78,7 +78,8 @@ std::vector<std::pair<char,std::string>> planned_items(){
     {'B',"exception mode toggle"},{'B',"waitAny()"},{'B',"negative open case"},
     {'B',"open-only params precheck"},{'B',"backend ANY vs V4L2"},
     {'B',"grab()"},{'B',"retrieve()"},{'B',"read loop"},{'B',"operator>>"},{'B',"release()"},
-    {'B',"open(String filename, apiPreference)"},{'B',"open(int,api,params)"},{'B',"open(String,api,params)"},{'B',"open(IStreamReader,api,params)"}};
+    {'B',"open(String filename, apiPreference)"},{'B',"open(int,api,params)"},{'B',"open(String,api,params)"},{'B',"open(IStreamReader,api,params)"},
+    {'B',"close for heterogenous open"},{'B',"reopen for F sweep"}};
   for(const char*n:{"FRAME_WIDTH","FRAME_HEIGHT","FPS","FOURCC","BUFFERSIZE","AUTO_EXPOSURE","EXPOSURE","GAIN","FORMAT","MODE","CONVERT_RGB"})
     v.push_back({'C',std::string("CAP_PROP_")+n+" get/set"});
   for(const char*n:{"frame not None","frame dimensions","pixel variance","freeze detection"})v.push_back({'D',n});
@@ -438,15 +439,15 @@ void test_capture_open_overloads(Suite&s,const std::string&device,const std::str
       cap.release();
     }
   }catch(const std::exception&e){ s.add("B","open(String,api,params)",WARN,std::string("raised: ")+e.what()); }
-  // 3) open(int, api, params) — device with params
+  // 3) open(int, api, params) — device with params (V4L2-compatible)
   try{
-    std::vector<int> params = {cv::CAP_PROP_READ_TIMEOUT_MSEC, 5000};
+    std::vector<int> params = {cv::CAP_PROP_BUFFERSIZE, 1};
     VideoCapture cap; bool opened=false;
     try{
       if(device.find_first_not_of("0123456789")==std::string::npos) opened = cap.open(std::stoi(device), cv::CAP_V4L2, params);
       else opened = cap.open(device, cv::CAP_V4L2, params);
     }catch(...){ opened=false; }
-    s.add("B","open(int,api,params)", (opened&&cap.isOpened())?PASS:WARN, "params READ_TIMEOUT_MSEC=5000");
+    s.add("B","open(int,api,params)", (opened&&cap.isOpened())?PASS:WARN, "params BUFFERSIZE=1");
     cap.release();
   }catch(const std::exception&e){ s.add("B","open(int,api,params)",WARN,std::string("raised: ")+e.what()); }
   // 4) open(IStreamReader, api, params) — memory stream
@@ -592,6 +593,16 @@ void test_full_sweep(Suite&s,const std::string&backend,const std::string&device)
     if(std::fabs(got-val)>std::max(1e-6,std::fabs(val)*1e-6))
       s.add("F",api,WARN,"roundtrip drift: "+std::to_string(val)+" -> "+std::to_string(got));
     else if(std::fabs(val)<=1e-9){
+      // Special probe for MODE: 0(real) -> 1(normalized) toggles palette
+      if(name=="CAP_PROP_MODE"){
+        bool pok = safe_set(s.cap, e.pid, 1);
+        double got2 = pok? safe_get(s.cap, e.pid): -1e9;
+        bool changed = (got2>-1e8 && ((got2!=0) != (val!=0)));
+        safe_set(s.cap, e.pid, val);
+        if(changed) s.add("F",api,PASS,"probe MODE 0 -> 1 (palette "+std::to_string((int)got2)+")");
+        else s.add("F",api,WARN,"MODE probe 0->1 no effect");
+        continue;
+      }
       // Current value is 0: writing 0 back proves nothing.  If the driver
       // declares this control, probe with a non-zero in-range value.
       bool handled=false;
@@ -737,8 +748,26 @@ int main(int argc,char**argv){
   if(!opened)skip_rest(s,"camera failed to open");
   else{capture_extras(s);test_properties(s);lifecycle_reads(s,args.frames);frame_quality(s);
     v4l2_crosscheck(s,args.device);os_mkdir(args.outdir);test_writer(s,args.outdir);
-    test_capture_open_overloads(s,args.device,args.outdir);
-    test_writer_overloads(s,args.outdir);
+    // heterogenous open needs exclusive device: close, test, reopen for F
+    {
+      bool wasOpened = s.cap.isOpened();
+      if(wasOpened) s.cap.release();
+      s.add("B","close for heterogenous open", !s.cap.isOpened()?PASS:WARN, "released for exclusive test");
+      test_capture_open_overloads(s,args.device,args.outdir);
+      test_writer_overloads(s,args.outdir);
+      if(wasOpened){
+        bool reopened=false;
+        try{
+          if(args.device.find_first_not_of("0123456789")==std::string::npos) reopened = s.cap.open(std::stoi(args.device), api_cast(bid));
+          else reopened = s.cap.open(args.device, api_cast(bid));
+        }catch(...){ reopened=false; }
+        s.add("B","reopen for F sweep", (reopened&&s.cap.isOpened())?PASS:FAIL, reopened?"reopened":"reopen failed");
+        if(reopened){
+          s.observed["width"]=safe_get(s.cap,cv::CAP_PROP_FRAME_WIDTH);
+          s.observed["height"]=safe_get(s.cap,cv::CAP_PROP_FRAME_HEIGHT);
+        }
+      }
+    }
     // [F] must run while the capture is still open: get()/set() on a
     // released cap returns -1 and poisons the whole sweep.
     if(!args.no_full_sweep)test_full_sweep(s,args.backend,args.device);

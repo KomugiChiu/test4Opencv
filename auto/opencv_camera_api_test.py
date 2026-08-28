@@ -1292,6 +1292,16 @@ def test_full_sweep(s):
         if drift > tol:
             s.add("F", api, WARN, f"roundtrip drift: {val} -> {got}")
         elif vnum is not None and abs(vnum) <= 1e-9:
+            if p["name"] == "MODE":
+                stp, _ = call_with_timeout(lambda pid=p["pid"]: s.cap.set(pid, 1), OPEN_TIMEOUT_SEC)
+                got2 = safe_get(s.cap, p["pid"]) if stp == "ok" else None
+                changed = got2 is not None and ((got2!=0) != (vnum!=0))
+                call_with_timeout(lambda pid=p["pid"], v=val: s.cap.set(pid, val), OPEN_TIMEOUT_SEC)
+                if changed:
+                    s.add("F", api, PASS, f"probe MODE 0 -> 1 (palette {got2})")
+                else:
+                    s.add("F", api, WARN, "MODE probe 0->1 no effect")
+                continue
             handled = False
             v4l2_key = CAP_PROP_TO_V4L2.get(p["name"])
             info = v4l2_ctrls.get(v4l2_key) if (v4l2_ctrls and v4l2_key) else None
