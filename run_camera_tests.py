@@ -701,11 +701,28 @@ def auto_setup_official(cfg, dry_run=False):
     else:
         print("  testdata already present")
 
+    # Step 1.5: clone opencv source if missing
+    need_source = not os.path.isdir(os.path.join(sd, ".git"))
+    if need_source:
+        print(f"  [source] cloning opencv -> {sd}")
+        if dry_run:
+            print("  [dry-run] skip")
+        else:
+            try:
+                clone_args = ["git", "clone", "--depth", "1"]
+                if branch and branch != "latest":
+                    clone_args += ["--branch", branch]
+                clone_args += ["https://github.com/opencv/opencv.git", sd]
+                subprocess.run(clone_args, check=True, timeout=600)
+                print(f"  OK: opencv source cloned")
+            except Exception as e:
+                print(f"  FAIL: {e}")
+                return False
+    else:
+        print("  opencv source already present")
+
     # Step 2: build opencv_test_videoio (shares selfbuild source/build)
     if need_binary:
-        if not os.path.isdir(sd):
-            print(f"  FAIL: source not found at {sd}")
-            return False
         print(f"  [build] cmake {sd} -> {bd} (target=opencv_test_videoio)")
         if dry_run:
             print("  [dry-run] skip")
