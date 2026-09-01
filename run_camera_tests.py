@@ -32,6 +32,60 @@ DEFAULT_CONFIG_DEFAULT = os.path.join(HERE, "run_config.default.yaml")
 USER_CONFIG = os.path.join(HERE, "run_config.yaml")  # alias for DEFAULT_CONFIG
 
 
+def ensure_python_deps():
+    """Check pip and openpyxl are available; install missing ones.
+
+    openpyxl is required for all Excel report generation (auto / manual /
+    official / combined). pip with --user avoids needing root.
+    """
+    print("\n== Python dependency preflight ==")
+
+    def _ensure_pip():
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "--version"],
+                           capture_output=True, check=True)
+            return True
+        except Exception:
+            return False
+
+    def _ensure_openpyxl():
+        try:
+            import openpyxl  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    if not _ensure_pip():
+        try:
+            subprocess.run(
+                ["python3", "-m", "ensurepip", "--upgrade"],
+                check=True, timeout=120)
+            subprocess.run(
+                [sys.executable, "-m", "pip", "--version"],
+                check=True, timeout=60)
+            print("  OK: pip installed/updated")
+        except Exception:
+            subprocess.run([sys.executable, "-m", "pip", "install",
+                            "--user", "pip"], check=True)
+            print("  OK: pip installed via pip bootstrap")
+
+    if not _ensure_openpyxl():
+        print("  openpyxl not found, installing...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--user",
+                        "-q", "--break-system-packages", "openpyxl"], check=True)
+        try:
+            import openpyxl  # noqa: F401
+            print("  OK: openpyxl installed")
+        except ImportError:
+            raise RuntimeError(
+                "openpyxl still unavailable after install; "
+                "see https://pypi.org/project/openpyxl/")
+    else:
+        print("  OK: openpyxl present")
+
+    return True
+
+
 def do_clear(cfg):
     """Interactive cleanup: report / auto_cpp build / manual_cpp build / selfbuild."""
     cpp = cfg.get("cpp", {})
@@ -878,6 +932,8 @@ def main():
     ap.add_argument("command", nargs="?", default=None,
                     help="optional: 'clear' to clean up builds/reports")
     args = ap.parse_args()
+
+    ensure_python_deps()
 
     cfg, _ = load_config(args.config)
 

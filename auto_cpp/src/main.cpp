@@ -450,8 +450,10 @@ void test_capture_open_overloads(Suite&s,const std::string&device,const std::str
     s.add("B","open(int,api,params)", (opened&&cap.isOpened())?PASS:WARN, "params BUFFERSIZE=1");
     cap.release();
   }catch(const std::exception&e){ s.add("B","open(int,api,params)",WARN,std::string("raised: ")+e.what()); }
-  // 4) open(IStreamReader, api, params) — memory stream
-#if CV_VERSION_MAJOR >= 4
+  // 4) open(IStreamReader, api, params) — memory stream.
+  // cv::IStreamReader (long long read/seek) is only a public API on
+  // OpenCV 5.x; the class does not exist in the 4.x public headers.
+#if CV_VERSION_MAJOR >= 5
   try{
     if(!sample_exists) s.add("B","open(IStreamReader,api,params)",SKIP,"no sample file for MemReader");
     else{
@@ -481,7 +483,7 @@ void test_capture_open_overloads(Suite&s,const std::string&device,const std::str
     }
   }catch(const std::exception&e){ s.add("B","open(IStreamReader,api,params)",WARN,std::string("raised: ")+e.what()); }
 #else
-  s.add("B","open(IStreamReader,api,params)",SKIP,"IStreamReader requires OpenCV >=4");
+  s.add("B","open(IStreamReader,api,params)",SKIP,"IStreamReader requires OpenCV >=5 (public API in 5.x only)");
 #endif
 }
 void test_writer_overloads(Suite&s,const std::string&outdir){
