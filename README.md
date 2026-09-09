@@ -432,3 +432,43 @@ python3 ./install/scripts/run_official_videoio_test.py \
 上 `ldd` 全滅。解法是在目標同版本 OS 上**砍掉重編**（`build_prebuilt.sh`
 內建 stale-ABI 拒絕門），不要增量編。新包另有兩處防線：
 `VERSION.json`（opencv commit + ffmpeg 版號 + arch）與 install 時的 arch 閘門。
+
+### 6.6 範例：外層 `example/Makefile`（佈局 `example/camera_toolkit`）
+
+若 toolkit 被包進上層專案（`example/camera_toolkit`），外層 Makefile 只需委派：
+
+```make
+# example/Makefile — thin wrapper, 實際工作全在 camera_toolkit/
+TOOLKIT_DIR := $(CURDIR)/camera_toolkit
+ARCH ?= native
+JOBS ?= $(shell nproc)
+INSTALL_DIR ?= $(CURDIR)/install
+
+.PHONY: prebuild package verify verify-cross install help
+help:
+	@echo "targets: prebuild | package | verify | verify-cross | install  (ARCH=native|aarch64)"
+
+prebuild:
+	$(MAKE) -C $(TOOLKIT_DIR) prebuild ARCH=$(ARCH) JOBS=$(JOBS)
+
+package:
+	$(MAKE) -C $(TOOLKIT_DIR) package ARCH=$(ARCH)
+
+verify:
+	$(MAKE) -C $(TOOLKIT_DIR) verify
+
+verify-cross:
+	$(MAKE) -C $(TOOLKIT_DIR) verify-cross ARCH=aarch64
+
+install:
+	$(MAKE) -C $(TOOLKIT_DIR) install ARCH=$(ARCH) INSTALL_DIR=$(INSTALL_DIR)
+```
+
+```bash
+make -C example prebuild ARCH=aarch64
+make -C example verify-cross ARCH=aarch64
+make -C example install ARCH=aarch64   # 產物在 example/install/，dist 維持在 camera_toolkit/dist/
+```
+
+要點：`$(MAKE) -C` 會把 cwd 切進 `camera_toolkit/`，內層相對路徑不用改；
+只有 `INSTALL_DIR` 必須給絕對路徑（`$(CURDIR)/install`），否則會被內層相對解讀。
