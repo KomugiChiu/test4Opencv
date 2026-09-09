@@ -376,6 +376,8 @@ C++ 套件（`auto_cpp`、`manual_cpp`）與官方 `opencv_test_videoio` 採 sel
 | `make verify-cross ARCH=aarch64` | cross 驗證（`file` + `readelf` + qemu smoke） | PASS 才打包 |
 | `make package [ARCH=...]` | 打包（不含 testdata/source） | `dist/camera-toolkit-<arch>-*.tar.gz`（x86 實測 28M、arm64 實測 11M） |
 | `make install [ARCH=...]` | 打包 + 組出本地 `./install/`（免 sudo、可直接執行，見 6.4） | `./install/` |
+| `make clean` | 清 consumer build + `dist/` + `install/`（保留 opencv build/source/testdata） | — |
+| `make clean-all` | `clean` + 清 `build/latest`、`build/aarch64`（重編很久，慎用） | — |
 | `make install-target` | 印出目標板上的安裝指令（需 sudo） | 提示文字 |
 
 ### 6.2 Cross compile 前置（x86_64 → aarch64，一次就好）

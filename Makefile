@@ -7,9 +7,9 @@ JOBS ?= $(shell nproc)
 PREFIX ?= /opt/camera-toolkit
 INSTALL_DIR ?= install
 
-.PHONY: prebuild package verify verify-cross install help
+.PHONY: prebuild package verify verify-cross install install-target clean clean-all help
 help:
-	@echo "targets: prebuild | package | verify | verify-cross | install  (ARCH=native|aarch64)"
+	@echo "targets: prebuild | package | verify | verify-cross | install | clean | clean-all  (ARCH=native|aarch64)"
 
 prebuild:
 	bash scripts/build_prebuilt.sh --arch $(ARCH) --build-dir $(BUILD_DIR) --jobs $(JOBS)
@@ -29,3 +29,12 @@ install: package
 
 install-target:
 	@echo "on target board: sudo bash scripts/install_prebuilt.sh --tarball dist/<name>.tar.gz --prefix $(PREFIX) --fetch-testdata full --yes"
+
+# clean: consumer build dirs + dist + install/ (keeps opencv build + source + testdata)
+CONSUMER_BUILDS := auto_cpp/build manual_cpp/build auto_cpp/build-aarch64 manual_cpp/build-aarch64
+clean:
+	rm -rf $(CONSUMER_BUILDS) dist $(INSTALL_DIR)
+
+# clean-all: also drops opencv build trees (rebuild takes a long time)
+clean-all: clean
+	rm -rf build/latest build/aarch64
