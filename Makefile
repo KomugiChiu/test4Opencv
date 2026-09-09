@@ -6,13 +6,15 @@ OPENCV_TEST_BUILD_DIR ?= $(if $(filter aarch64,$(ARCH)),build/aarch64,build/late
 JOBS ?= $(shell nproc)
 PREFIX ?= /opt/camera-toolkit
 INSTALL_DIR ?= install
+# cross (aarch64) defaults to installing deps; native stays non-privileged.
+INSTALL_DEPS ?= $(if $(filter aarch64,$(ARCH)),1,0)
 
 .PHONY: prebuild package verify verify-cross install install-target clean clean-all help
 help:
 	@echo "targets: prebuild | package | verify | verify-cross | install | clean | clean-all  (ARCH=native|aarch64)"
 
 prebuild:
-	bash scripts/build_prebuilt.sh --arch $(ARCH) --opencv-test-build-dir $(OPENCV_TEST_BUILD_DIR) --jobs $(JOBS)
+	bash scripts/build_prebuilt.sh --arch $(ARCH) --opencv-test-build-dir $(OPENCV_TEST_BUILD_DIR) --jobs $(JOBS) $(if $(filter 1 true yes,$(INSTALL_DEPS)),--install-deps)
 
 package:
 	bash scripts/package_prebuilt.sh --arch $(ARCH) --opencv-test-build-dir $(OPENCV_TEST_BUILD_DIR)

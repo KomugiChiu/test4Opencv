@@ -53,6 +53,11 @@ for t in git cmake g++ python3; do
 done
 if [[ "$ARCH" == "aarch64" && $INSTALL_DEPS -eq 1 ]]; then
   # One-shot cross-env bootstrap (needs sudo): multiarch arm64 + ports + toolchain + dev libs.
+  # Idempotent: skip entirely when already equipped.
+  if command -v aarch64-linux-gnu-g++ >/dev/null 2>&1 && \
+     [[ -f /usr/lib/aarch64-linux-gnu/libavcodec.so || -f /usr/aarch64-linux-gnu/lib/libavcodec.so ]]; then
+    echo "[deps] cross toolchain + arm64 dev libs already present, skipping apt"
+  else
   echo "[deps] installing aarch64 cross toolchain + arm64 dev libs (sudo required)"
   sudo dpkg --add-architecture arm64
   if [[ ! -f /etc/apt/sources.list.d/ubuntu-ports.sources ]]; then
@@ -71,6 +76,7 @@ if [[ "$ARCH" == "aarch64" && $INSTALL_DEPS -eq 1 ]]; then
   sudo apt-get install -y g++-aarch64-linux-gnu gcc-aarch64-linux-gnu \
     libavcodec-dev:arm64 libavformat-dev:arm64 libavutil-dev:arm64 libswscale-dev:arm64 \
     libtiff-dev:arm64 libopenexr-dev:arm64 libyaml-cpp-dev:arm64
+  fi
 fi
 if [[ "$ARCH" == "aarch64" ]]; then
   command -v aarch64-linux-gnu-g++ >/dev/null || { echo "ERROR: aarch64-linux-gnu-g++ missing (apt install g++-aarch64-linux-gnu)" >&2; exit 2; }
