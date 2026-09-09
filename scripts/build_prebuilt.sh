@@ -60,12 +60,16 @@ if [[ "$ARCH" == "aarch64" && $INSTALL_DEPS -eq 1 ]]; then
   else
   echo "[deps] installing aarch64 cross toolchain + arm64 dev libs (sudo required)"
   sudo dpkg --add-architecture arm64
-  if [[ ! -f /etc/apt/sources.list.d/ubuntu-ports.sources ]]; then
+  # Migrate legacy filename to avoid duplicate apt sources.
+  if [[ -f /etc/apt/sources.list.d/ubuntu-ports.sources ]]; then
+    sudo rm -f /etc/apt/sources.list.d/ubuntu-ports.sources
+  fi
+  if [[ ! -f /etc/apt/sources.list.d/ubuntu-ports-arm64.sources ]]; then
     printf '%s\n' 'Types: deb' 'URIs: http://ports.ubuntu.com/ubuntu-ports/' \
       'Suites: noble noble-updates noble-backports noble-security' \
       'Components: main restricted universe multiverse' 'Architectures: arm64' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
-      | sudo tee /etc/apt/sources.list.d/ubuntu-ports.sources >/dev/null
+      | sudo tee /etc/apt/sources.list.d/ubuntu-ports-arm64.sources >/dev/null
   fi
   # Pin x86 repos to amd64 so apt won't look for arm64 on archive/security mirrors.
   if ! grep -q "Architectures: amd64" /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null; then
