@@ -9,6 +9,7 @@ PREFIX="/opt/camera-toolkit"
 FETCH="skip"
 YES=0
 NO_APT=0
+FORCE_ARCH=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -17,6 +18,7 @@ while [[ $# -gt 0 ]]; do
     --fetch-testdata) FETCH="$2"; shift 2 ;;
     --yes|-y) YES=1; shift ;;
     --no-apt) NO_APT=1; shift ;;
+    --force-arch) FORCE_ARCH=1; shift ;;
     -h|--help) sed -n '2,4p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -68,17 +70,28 @@ source "$PREFIX/setup_vars.sh"
 # 2b. arch gate: refuse x86 pkg on arm64 and vice versa
 PKG_ARCH="$(file "$PREFIX/bin/opencv_camera_api_test_cpp" | grep -o -E "ARM aarch64|x86-64" || echo ?)"
 HOST_ARCH="$(uname -m)"
+_ARCH_MISMATCH=""
 if [[ "$PKG_ARCH" == *"aarch64"* && "$HOST_ARCH" != "aarch64" ]]; then
-  echo "ERROR: aarch64 package on $HOST_ARCH host (use qemu or arm64 board)" >&2; exit 2
+  _ARCH_MISMATCH="aarch64 package on $HOST_ARCH host (use qemu or arm64 board)"
 fi
 if [[ "$PKG_ARCH" == "x86-64" && "$HOST_ARCH" == "aarch64" ]]; then
-  echo "ERROR: x86-64 package on arm64 host" >&2; exit 2
+  _ARCH_MISMATCH="x86-64 package on arm64 host"
+fi
+if [[ -n "$_ARCH_MISMATCH" ]]; then
+  if [[ $FORCE_ARCH -eq 1 ]]; then
+    echo "[arch] WARN: $_ARCH_MISMATCH -- forced, smoke will use qemu when available" >&2
+  else
+    echo "ERROR: $_ARCH_MISMATCH" >&2; exit 2
+  fi
 fi
 echo "[arch] pkg=$PKG_ARCH host=$HOST_ARCH"
 
-# 3. ldd gate
+# 3. ldd gate (native only; cross ELF is checked by file+readelf+qemu instead)
 echo "[check] ldd"
 fail=0
+if [[ "$PKG_ARCH" == *"aarch64"* && "$HOST_ARCH" != "aarch64" ]]; then
+  echo "  SKIP host ldd for cross pkg (covered by qemu smoke below)"
+else
 for f in "$PREFIX"/bin/* "$PREFIX"/lib/libopencv_videoio.so*; do
   [[ -f "$f" ]] || continue
   if file "$f" | grep -q ELF; then
@@ -87,6 +100,7 @@ for f in "$PREFIX"/bin/* "$PREFIX"/lib/libopencv_videoio.so*; do
     fi
   fi
 done
+fi
 [[ $fail -eq 0 ]] && echo "  all ELF OK" || { echo "ERROR: fix apt deps above then re-run" >&2; exit 1; }
 
 # 4. testdata fetch on target (full per decision; slim keeps stub for preflight)

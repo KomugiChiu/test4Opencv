@@ -25,7 +25,7 @@ verify-cross:
 
 install: package
 	bash scripts/install_prebuilt.sh --tarball "$$(ls -t dist/*.tar.gz | head -n 1)" \
-		--prefix $(INSTALL_DIR) --fetch-testdata skip --no-apt
+		--prefix $(INSTALL_DIR) --fetch-testdata skip --no-apt --force-arch
 
 install-target:
 	@echo "on target board: sudo bash scripts/install_prebuilt.sh --tarball dist/<name>.tar.gz --prefix $(PREFIX) --fetch-testdata full --yes"

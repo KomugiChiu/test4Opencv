@@ -31,8 +31,18 @@ if [[ -z "$MANUAL_B" ]]; then
   [[ "$BUILD_DIR" == *aarch64* ]] && MANUAL_B="$HERE/manual_cpp/build-aarch64" || MANUAL_B="$HERE/manual_cpp/build"
 fi
 
-OCV_VER="$("$BUILD_DIR/bin/opencv_version" 2>/dev/null || echo 5.1.0-dev)"
-ARCH="$(uname -m)"
+if [[ -f "$BUILD_DIR/VERSION.json" ]]; then
+  OCV_VER="$(grep -oE '"opencv_version": "[^"]*"' "$BUILD_DIR/VERSION.json" | cut -d'"' -f4)"
+fi
+[[ -z "${OCV_VER:-}" ]] && OCV_VER="$("$BUILD_DIR/bin/opencv_version" 2>/dev/null || echo 5.1.0-dev)"
+if [[ -n "$ARCH_ARG" ]]; then
+  ARCH="$ARCH_ARG"
+  [[ "$ARCH" == "native" ]] && ARCH="$(uname -m)"
+elif [[ "$BUILD_DIR" == *aarch64* ]]; then
+  ARCH="aarch64"
+else
+  ARCH="$(uname -m)"
+fi
 [[ -z "$OUT" ]] && OUT="$HERE/dist/camera-toolkit-${ARCH}-ocv${OCV_VER}.tar.gz"
 
 STAGE="$(mktemp -d)"
@@ -61,12 +71,17 @@ cp -a "$HERE/auto_cpp/run_test.sh" "$ROOT/scripts/run_test_auto.sh"
 cp -a "$HERE/manual_cpp/run_test.sh" "$ROOT/scripts/run_test_manual.sh"
 cp -a "$HERE/official/run_official_videoio_test.py" "$ROOT/scripts/"
 cp -a "$HERE/auto_cpp/tools/make_report_xlsx.py" "$ROOT/scripts/"
+mkdir -p "$ROOT/scripts/tools"   # staged run_test_auto.sh expects $HERE/tools/
+cp -a "$HERE/auto_cpp/tools/make_report_xlsx.py" "$ROOT/scripts/tools/"
 cp -a "$HERE/generate_combined_report.py" "$ROOT/scripts/"
 cp -a "$HERE/run_cpp_tests.sh" "$ROOT/scripts/" 2>/dev/null || true
 cp -a "$HERE/manual_cpp/manifest_manual.yaml" "$ROOT/manual_cpp/" 2>/dev/null || \
   cp -a "$HERE/manual/manifest_manual.yaml" "$ROOT/manual_cpp/" 2>/dev/null || true
 [[ -f "$BUILD_DIR/VERSION.json" ]] && cp -a "$BUILD_DIR/VERSION.json" "$ROOT/"
 cp -a "$HERE/run_config.default.yaml" "$ROOT/run_config.prebuilt.yaml"
+cp -a "$HERE/README.prebuilt.md" "$ROOT/README.md"
+cp -a "$HERE/run_prebuilt_tests.py" "$HERE/run_test.sh" "$ROOT/"
+chmod +x "$ROOT/run_test.sh"
 
 cat > "$ROOT/setup_vars.sh" <<'EOF'
 # shellcheck disable=SC2148
