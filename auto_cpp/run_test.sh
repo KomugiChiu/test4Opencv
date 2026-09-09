@@ -53,6 +53,8 @@ export OPENCV_SOURCE_DIR="$OCV_SRC"
 export OPENCV_BUILD_DIR="$OCV_BUILD"
 
 FORCE_REBUILD=0
+NO_BUILD=0
+PREBUILT_ROOT="${PREBUILT_ROOT:-}"
 DEVICE="/dev/video0"
 ARGS=()
 RAW_HAS_DEVICE=0
@@ -64,11 +66,25 @@ while [[ $# -gt 0 ]]; do
       ARGS+=("$1" "$2"); shift 2 ;;
     --list-only|--no-full-sweep|--no-xlsx) ARGS+=("$1"); shift ;;
     --rebuild) FORCE_REBUILD=1; shift ;;
+    --no-build) NO_BUILD=1; shift ;;
+    --prebuilt-root) PREBUILT_ROOT="$2"; shift 2 ;;
     -h|--help) ARGS+=("$1"); shift ;;
     --) shift; ARGS+=("$@"); break ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
+[[ "${SKIP_BUILD:-0}" == "1" ]] && NO_BUILD=1
+# Auto-detect packaged layout: <root>/scripts/run_test_auto.sh with <root>/bin/ beside it.
+if [[ -z "$PREBUILT_ROOT" && -x "$HERE/../bin/opencv_camera_api_test_cpp" ]]; then
+  PREBUILT_ROOT="$HERE/.."
+fi
+if [[ -n "$PREBUILT_ROOT" ]]; then
+  BIN="$PREBUILT_ROOT/bin/opencv_camera_api_test_cpp"
+  [[ -d "$PREBUILT_ROOT/lib" ]] && export LD_LIBRARY_PATH="$PREBUILT_ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  CPP_SOURCE="selfbuild"
+  export CPP_OPENCV_SOURCE="selfbuild"
+  NO_BUILD=1
+fi
 
 if [[ "$DEVICE" =~ ^[0-9]+$ ]]; then DEVICE_NORM="/dev/video$DEVICE"; else DEVICE_NORM="$DEVICE"; fi
 
@@ -142,7 +158,15 @@ if [[ -f "$HERE/build/CMakeCache.txt" ]]; then
     _NEED_REBUILD=1
   fi
 fi
-if [[ ! -x "$BIN" || $FORCE_REBUILD -eq 1 || $_NEED_REBUILD -eq 1 ]]; then
+if [[ $NO_BUILD -eq 1 ]]; then
+  [[ -x "$BIN" ]] || { echo "[auto_cpp] ERROR: --no-build but binary missing: $BIN" >&2; exit 2; }
+  if ldd "$BIN" 2>/dev/null | grep -q "not found"; then
+    echo "[auto_cpp] ERROR: prebuilt binary has missing .so:" >&2
+    ldd "$BIN" | grep "not found" >&2 || true
+    exit 2
+  fi
+  echo "[auto_cpp] prebuilt mode, skip build: $BIN" >&2
+elif [[ ! -x "$BIN" || $FORCE_REBUILD -eq 1 || $_NEED_REBUILD -eq 1 ]]; then
   [[ $_NEED_REBUILD -eq 1 ]] && rm -f "$HERE/build/CMakeCache.txt"
   build
 fi
@@ -159,7 +183,13 @@ for ((_i=0; _i<_n; _i++)); do
 done
 
 set +e
-"$BIN" --outdir ./report/new "${ARGS[@]:+"${ARGS[@]}"}"
+HAS_OUTDIR=0
+for a in "${ARGS[@]:-}"; do [[ "$a" == "--outdir" || "$a" == "-o" ]] && HAS_OUTDIR=1; done
+if [[ $HAS_OUTDIR -eq 1 ]]; then
+  "$BIN" "${ARGS[@]:+"${ARGS[@]}"}"
+else
+  "$BIN" --outdir "$OUTDIR" "${ARGS[@]:+"${ARGS[@]}"}"
+fi
 RC=$?
 set -e
 

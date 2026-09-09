@@ -357,3 +357,78 @@ python3 ../opencv_claude/camera_api_test/report_generator.py \
 | `usb_unplug_reconnect_test.py` | 拔插重連專項（也被 run_manual_suite 第 5 項呼叫） |
 | `exposure_visual_check.py` / `autofocus_visual_check.py` / `white_balance_visual_check.py` | 三個目視項目的獨立量測助手（也可單獨用） |
 | `official/` | 官方 gtest 測試一鍵腳本 ×2 + 專屬 README |
+
+---
+
+## 6. 預編譯包：先編好 → 打包 → 目標機直跑（含 cross compile）
+
+C++ 套件（`auto_cpp`、`manual_cpp`）與官方 `opencv_test_videoio` 採 selfbuild。
+先在一台機器上編好，打成 relocatable tarball，目標機解包後**不重編直接執行**。
+`testdata` 不進包，改由目標機安裝時再抓（full 389M）。
+
+### 6.1 Makefile 一覽（預設原生，`ARCH=aarch64` 切 cross）
+
+| 指令 | 作用 | 產物 |
+|---|---|---|
+| `make prebuild` | 原生全編（opencv + auto_cpp + manual_cpp） | `build/latest/`、`auto_cpp/build/`、`manual_cpp/build/` |
+| `make verify` | 原生驗證（`ldd` + smoke） | PASS 才往下走 |
+| `make prebuild ARCH=aarch64` | cross 全編（x86_64 → aarch64） | `build/aarch64/`、`auto_cpp/build-aarch64/`、`manual_cpp/build-aarch64/` |
+| `make verify-cross ARCH=aarch64` | cross 驗證（`file` + `readelf` + qemu smoke） | PASS 才打包 |
+| `make package [ARCH=...]` | 打包（不含 testdata/source） | `dist/camera-toolkit-<arch>-*.tar.gz`（x86 實測 28M、arm64 實測 11M） |
+| `make install [ARCH=...]` | 打包 + 組出本地 `./install/`（免 sudo、可直接執行，見 6.4） | `./install/` |
+| `make install-target` | 印出目標板上的安裝指令（需 sudo） | 提示文字 |
+
+### 6.2 Cross compile 前置（x86_64 → aarch64，一次就好）
+
+```bash
+bash scripts/build_prebuilt.sh --arch aarch64 --install-deps   # 需 sudo：
+# dpkg 加 arm64 架構 → 加 ports.ubuntu.com 源 → 裝 aarch64-linux-gnu-g++ →
+# 裝 libavcodec/format/util/swscale、libtiff、libopenexr、libyaml-cpp 的 :arm64 dev 包
+```
+
+原理：`cmake/toolchain-aarch64.cmake`（`SYSTEM_NAME/PROCESSOR` + triple-prefixed compiler
++ `FIND_ROOT_MODE_*` + `PKG_CONFIG_SYSROOT` + 沿用 `$ORIGIN` RPATH），
+搭配 `qemu-aarch64-static` 做 smoke。FFmpeg 政策是**缺件就報錯停下**，不允許
+`-DWITH_FFMPEG=OFF` 降級（videoio 會被閹割）。
+
+注意：builder 與目標機的 Ubuntu 主版本必須一致（同為 noble 24.04），
+否則 `libavcodec.so.60` / `libtiff.so.6` 等版號又會對不上（見 6.5）。
+
+### 6.3 目標板安裝（arm64 板上，需 sudo）
+
+```bash
+sudo bash scripts/install_prebuilt.sh \
+  --tarball dist/camera-toolkit-aarch64-*.tar.gz \
+  --prefix /opt/camera-toolkit --fetch-testdata full --yes
+# 做什麼：apt 裝 runtime libs → 解包 → arch 閘門（x86 包拒上 arm64）→
+# 抓 testdata（full/slim/skip）→ smoke
+```
+
+`--fetch-testdata full` 會 `git sparse-checkout testdata/cv + testdata/highgui`；
+無外網的現場改用預包 testdata 或 `--fetch-testdata skip`。
+
+### 6.4 直接執行（不重編、不放 /opt 也行）
+
+**可以。`install/`（或 `/opt/camera-toolkit`）本身就是 relocatable 包，
+在資料夾內直接執行即可**，靠兩層機制：cross 件是 `$ORIGIN` RPATH，
+native 件靠 `setup_vars.sh` 的 `LD_LIBRARY_PATH` fallback；
+`scripts/run_test_*.sh` 偵測到自己身處包內（`../bin/` 存在）會自動設
+`PREBUILT_ROOT` 並跳過 `git/cmake/apt` 重編：
+
+```bash
+./install/scripts/run_test_auto.sh --device /dev/video0 --no-build
+./install/scripts/run_test_manual.sh -d /dev/video0 --outdir ./rpt
+python3 ./install/scripts/run_official_videoio_test.py \
+  -e ./install/opencv_extra -d /dev/video0 -o ./rpt   # 需先 --fetch-testdata
+```
+
+`--no-build` / `PREBUILT_ROOT=...` / `SKIP_BUILD=1` 三者任一都會進入 prebuilt 模式；
+缺 binary 或 `ldd` 有 `not found` 會直接 exit 2 而不是默默重編。
+
+### 6.5 背景：`.so` 版號坑
+
+`build/latest` 曾是 Ubuntu20 殘留（link `libavcodec.so.58` / `libtiff.so.5` /
+`IlmImf-2_5`），在 Ubuntu24（`libavcodec.so.60` / `libtiff.so.6` / `OpenEXR-3_1`）
+上 `ldd` 全滅。解法是在目標同版本 OS 上**砍掉重編**（`build_prebuilt.sh`
+內建 stale-ABI 拒絕門），不要增量編。新包另有兩處防線：
+`VERSION.json`（opencv commit + ffmpeg 版號 + arch）與 install 時的 arch 閘門。

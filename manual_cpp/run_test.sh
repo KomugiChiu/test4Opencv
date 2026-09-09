@@ -65,6 +65,8 @@ RECONNECT_WINDOW=""
 LONG_RUN=""
 NO_EXCEL=0
 FORCE_REBUILD=0
+NO_BUILD=0
+PREBUILT_ROOT="${PREBUILT_ROOT:-}"
 EXTRA_ARGS=()
 
 print_help() {
@@ -124,6 +126,8 @@ while [[ $# -gt 0 ]]; do
       EXCEL_DIR="$OUTDIR"
       shift 2 ;;
     --rebuild) FORCE_REBUILD=1; shift ;;
+    --no-build) NO_BUILD=1; shift ;;
+    --prebuilt-root) PREBUILT_ROOT="$2"; shift 2 ;;
     -h|--help) print_help; exit 0 ;;
     --) shift; EXTRA_ARGS+=("$@"); break ;;
     *) EXTRA_ARGS+=("$1"); shift ;;
@@ -188,7 +192,27 @@ if [[ -f "$HERE/build/CMakeCache.txt" ]]; then
     if [[ "$CPP_SOURCE" == "apt" ]]; then _NEED_REBUILD=1; fi
   fi
 fi
-if [[ ! -x "$BIN" || $FORCE_REBUILD -eq 1 || $_NEED_REBUILD -eq 1 ]]; then
+[[ "${SKIP_BUILD:-0}" == "1" ]] && NO_BUILD=1
+# Auto-detect packaged layout: <root>/scripts/run_test_manual.sh with <root>/bin/ beside it.
+if [[ -z "$PREBUILT_ROOT" && -x "$HERE/../bin/manual_suite" ]]; then
+  PREBUILT_ROOT="$HERE/.."
+fi
+if [[ -n "$PREBUILT_ROOT" ]]; then
+  BIN="$PREBUILT_ROOT/bin/manual_suite"
+  [[ -d "$PREBUILT_ROOT/lib" ]] && export LD_LIBRARY_PATH="$PREBUILT_ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  CPP_SOURCE="selfbuild"
+  export CPP_OPENCV_SOURCE="selfbuild"
+  NO_BUILD=1
+fi
+if [[ $NO_BUILD -eq 1 ]]; then
+  [[ -x "$BIN" ]] || { echo "[manual_cpp] ERROR: --no-build but binary missing: $BIN" >&2; exit 2; }
+  if ldd "$BIN" 2>/dev/null | grep -q "not found"; then
+    echo "[manual_cpp] ERROR: prebuilt binary has missing .so:" >&2
+    ldd "$BIN" | grep "not found" >&2 || true
+    exit 2
+  fi
+  echo "[manual_cpp] prebuilt mode, skip build: $BIN" >&2
+elif [[ ! -x "$BIN" || $FORCE_REBUILD -eq 1 || $_NEED_REBUILD -eq 1 ]]; then
   [[ $_NEED_REBUILD -eq 1 ]] && rm -f "$HERE/build/CMakeCache.txt"
   build
 fi

@@ -314,6 +314,7 @@ def load_config(path):
         "backend": str(cfg.get("backend", "V4L2")).upper(),
         "report_dir": str(cfg.get("report_dir", "report")),
         "opencv_extra_dir": str(cfg.get("opencv_extra_dir", ".")),
+        "prebuilt_root": str(cfg.get("prebuilt_root", "") or ""),
         "combined_report": bool(cfg.get("combined_report", True)),
         "official_console_output": bool(cfg.get("official_console_output", False)),
         "auto_impl": str(cfg.get("auto_impl", "both")).lower(),
@@ -844,13 +845,34 @@ def _cpp_env(cfg, for_suite="auto-cpp"):
     env["REPORT_OPENCV_SOURCE"] = src
     # Per-suite env name for clarity
     env["CPP_SOURCE"] = src
+    # Prebuilt passthrough: PREBUILT_ROOT env or cfg prebuilt_root
+    _root = os.environ.get("PREBUILT_ROOT", "") or str(cfg.get("prebuilt_root", "") or "")
+    if _root:
+        if not os.path.isabs(_root):
+            _root = os.path.join(HERE, _root)
+        env["PREBUILT_ROOT"] = _root
+        if os.path.isdir(os.path.join(_root, "lib")):
+            env["LD_LIBRARY_PATH"] = os.path.join(_root, "lib") + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
     return env
+
+
+def _prebuilt_args(cfg):
+    """Extra args for prebuilt mode: PREBUILT_ROOT env or cfg prebuilt_root."""
+    root = os.environ.get("PREBUILT_ROOT", "") or str(cfg.get("prebuilt_root", "") or "")
+    if root:
+        if not os.path.isabs(root):
+            root = os.path.join(HERE, root)
+        return ["--prebuilt-root", root]
+    if os.environ.get("SKIP_BUILD", "0") == "1":
+        return ["--no-build"]
+    return []
 
 
 def build_command(suite, cfg, report_dir):
     py = sys.executable
     dev = cfg["device"]
     backend = cfg["backend"]
+    report_dir = os.path.abspath(report_dir)
     if suite == "auto":
         return [py, "-u", os.path.join(HERE, "auto", "opencv_camera_api_test.py"),
                 "--device", dev, "--backend", backend, "--outdir", report_dir]
@@ -859,7 +881,7 @@ def build_command(suite, cfg, report_dir):
                 os.path.join(HERE, "auto_cpp", "run_test.sh"),
                 "--device", dev, "--backend", backend,
                 "--frames", str(cfg.get("frames", 30)),
-                "--outdir", report_dir]
+                "--outdir", report_dir] + _prebuilt_args(cfg)
     if suite == "manual":
         return [py, "-u", os.path.join(HERE, "manual", "run_manual_suite.py"),
                 "--device", dev,
@@ -877,7 +899,7 @@ def build_command(suite, cfg, report_dir):
         lr = cfg.get("manual_long_run", 0)
         if lr and float(lr) > 0:
             cmd += ["--long-run", str(lr)]
-        return cmd
+        return cmd + _prebuilt_args(cfg)
     if suite == "official":
         ocpp = cfg.get("official_cpp", {})
         bd = ocpp.get("build_dir", "")
