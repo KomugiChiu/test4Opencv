@@ -78,7 +78,7 @@ cp -a "$HERE/run_cpp_tests.sh" "$ROOT/scripts/" 2>/dev/null || true
 cp -a "$HERE/manual_cpp/manifest_manual.yaml" "$ROOT/manual_cpp/" 2>/dev/null || \
   cp -a "$HERE/manual/manifest_manual.yaml" "$ROOT/manual_cpp/" 2>/dev/null || true
 [[ -f "$OPENCV_TEST_BUILD_DIR/VERSION.json" ]] && cp -a "$OPENCV_TEST_BUILD_DIR/VERSION.json" "$ROOT/"
-cp -a "$HERE/run_config.default.yaml" "$ROOT/run_config.prebuilt.yaml"
+cp -a "$HERE/run_config.prebuilt.default.yaml" "$ROOT/run_config.prebuilt.yaml"
 cp -a "$HERE/README.prebuilt.md" "$ROOT/README.md"
 cp -a "$HERE/run_prebuilt_tests.py" "$HERE/run_test.sh" "$ROOT/"
 chmod +x "$ROOT/run_test.sh"

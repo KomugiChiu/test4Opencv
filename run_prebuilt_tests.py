@@ -16,6 +16,9 @@ Usage:
   ./run_test.sh --device /dev/video0 [--suites auto,manual,official]
   python3 run_prebuilt_tests.py --dry-run   # show planned commands only
 
+Settings priority: CLI flags > interactive answers > run_config.prebuilt.yaml
+(next to run_test.sh) > built-in defaults. Non-tty (CI/pipe) never asks.
+
 Exit codes: 0 = all selected suites passed, 1 = at least one suite failed,
             2 = environment/config error (missing binary, testdata, ...).
 """
@@ -113,32 +116,211 @@ def build_plan(args, root, report_dir):
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--device", default="/dev/video0")
-    ap.add_argument("--backend", default="V4L2")
-    ap.add_argument("--suites", default="all",
-                    help="comma list of auto,manual,official, or all (default)")
+    # Promptable per-run options (None = not given on CLI -> ask if tty,
+    # else documented default). Fixed infra flags below are CLI-only.
+    ap.add_argument("--device", default=None, help="camera (default: /dev/video0)")
+    ap.add_argument("--backend", default=None, help="ANY|V4L2|GSTREAMER|FFMPEG (default: V4L2)")
+    ap.add_argument("--suites", default=None,
+                    help="comma list of auto,manual,official, or all (default: all)")
     ap.add_argument("--outdir", default=None,
                     help="report dir (default: ./report/<timestamp>/)")
-    ap.add_argument("--frames", type=int, default=30)
-    ap.add_argument("--reconnect-window", type=int, default=30)
-    ap.add_argument("--long-run", default=0)
+    ap.add_argument("--frames", type=int, default=None, help="(default: 30)")
+    ap.add_argument("--reconnect-window", type=int, default=None, help="(default: 30s)")
+    ap.add_argument("--long-run", default=None, help="(default: 0 min = skip)")
     ap.add_argument("--answer", default=None, choices=["p", "f", "s"],
-                    help="non-interactive manual verdict")
-    ap.add_argument("--filter", default=None, help="gtest filter for official")
-    ap.add_argument("--console-output", action="store_true")
-    ap.add_argument("--no-combined", dest="combined", action="store_false",
-                    default=True)
-    ap.add_argument("--fetch-testdata", default="auto",
+                    help="non-interactive manual verdict (default: ask at runtime)")
+    ap.add_argument("--filter", default=None, help="gtest filter for official (default: all)")
+    ap.add_argument("--console-output", dest="console_output",
+                    action="store_true", default=None,
+                    help="stream official gtest log live")
+    ap.add_argument("--no-console-output", dest="console_output",
+                    action="store_false",
+                    help="suppress live gtest log (log file still written)")
+    ap.add_argument("--combined", dest="combined",
+                    action="store_true", default=None,
+                    help="build combined_report.xlsx at the end")
+    ap.add_argument("--no-combined", dest="combined", action="store_false")
+    ap.add_argument("--fetch-testdata", default=None,
                     choices=["auto", "full", "slim", "skip"],
                     help="when official is selected but testdata is missing: "
                          "auto/full fetch it via git sparse-checkout "
-                         "(default: auto=full), slim fetches ~33M subset, "
+                         "(auto=full), slim fetches ~33M subset, "
                          "skip errors out instead")
+    ap.add_argument("--config", default=None,
+                    help="config file (default: <root>/run_config.prebuilt.yaml)")
     ap.add_argument("--dry-run", action="store_true")
     return ap.parse_args()
 
 
 EXTRA_URL = "https://github.com/opencv/opencv_extra.git"
+
+# Per-run options that vary (prompted when tty and not given on CLI).
+# Everything else (cpp paths, PREBUILT_ROOT, testdata URL, report names,
+# console/combined/fetch infra flags) is fixed.
+PROMPT_DEFAULTS = {
+    "device": "/dev/video0",
+    "backend": "V4L2",
+    "suites": "all",
+    "frames": 30,
+    "reconnect_window": 30,
+    "long_run": 0,
+    "answer": None,
+    "filter": None,
+    "outdir": None,
+}
+ALLOWED_BACKENDS = ("ANY", "V4L2", "GSTREAMER", "FFMPEG")
+ALLOWED_SUITES = ("auto", "manual", "official")
+CONFIG_KEYS = ("device", "backend", "suites", "frames", "reconnect_window",
+               "long_run", "answer", "filter", "outdir", "fetch_testdata",
+               "console_output", "combined_report")
+
+
+def load_prebuilt_config(path):
+    """Read run_config.prebuilt.yaml (like run_camera_tests.py reads
+    run_config.yaml). Missing file or no pyyaml -> {} (built-ins apply)."""
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        import yaml
+    except ImportError:
+        print(f"[config] WARN: {path} ignored (pyyaml not installed)")
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"[config] WARN: {path} unreadable ({e}), using built-ins")
+        return {}
+    return {k: cfg[k] for k in CONFIG_KEYS if k in cfg}
+
+
+def merge_defaults(cfg):
+    """yaml over built-ins, with validation (bad values warn + drop)."""
+    defaults = dict(PROMPT_DEFAULTS,
+                    fetch_testdata="auto", console_output=True,
+                    combined_report=True)
+    if not cfg:
+        return defaults
+    if "backend" in cfg:
+        b = str(cfg["backend"]).upper()
+        if b in ALLOWED_BACKENDS:
+            defaults["backend"] = b
+        else:
+            print(f"[config] WARN: bad backend '{cfg['backend']}', using "
+                  f"{defaults['backend']}")
+    for k in ("device", "answer", "filter", "outdir"):
+        if cfg.get(k) is not None:
+            defaults[k] = cfg[k]
+    if cfg.get("answer") not in (None, "p", "f", "s"):
+        print(f"[config] WARN: bad answer '{cfg.get('answer')}', asking at runtime")
+        defaults["answer"] = None
+    if "suites" in cfg and cfg["suites"] is not None:
+        s = cfg["suites"]
+        seq = s if isinstance(s, list) else [x.strip() for x in str(s).split(",")]
+        seq = [x for x in seq if x]
+        if not seq:
+            print("[config] WARN: empty suites, using all")
+        elif all(x in ALLOWED_SUITES for x in seq):
+            defaults["suites"] = ",".join(seq)
+        elif str(s).strip().lower() == "all":
+            defaults["suites"] = "all"
+        else:
+            print(f"[config] WARN: bad suites '{s}', using all")
+    for k in ("frames", "reconnect_window", "long_run"):
+        if cfg.get(k) is not None:
+            try:
+                defaults[k] = int(cfg[k])
+            except (TypeError, ValueError):
+                print(f"[config] WARN: bad {k} '{cfg[k]}', using "
+                      f"{defaults[k]}")
+    if cfg.get("fetch_testdata") in ("auto", "full", "slim", "skip"):
+        defaults["fetch_testdata"] = cfg["fetch_testdata"]
+    elif cfg.get("fetch_testdata") is not None:
+        print(f"[config] WARN: bad fetch_testdata "
+              f"'{cfg.get('fetch_testdata')}', using auto")
+    for k, yaml_k in (("console_output", "console_output"),
+                      ("combined", "combined_report")):
+        if isinstance(cfg.get(yaml_k), bool):
+            defaults[k] = cfg[yaml_k]
+    return defaults
+
+
+def _ask(prompt, default, cast=str, allowed=None):
+    disp = "" if default is None else str(default)
+    while True:
+        try:
+            raw = input(f"  {prompt} [{disp}]: ").strip()
+        except EOFError:
+            return default
+        if not raw:
+            return default
+        try:
+            val = cast(raw)
+        except ValueError:
+            print(f"    invalid value '{raw}'")
+            continue
+        if allowed and val not in allowed:
+            print(f"    allowed: {sorted(allowed) if isinstance(allowed, (tuple, list)) else allowed}")
+            continue
+        return val
+
+
+def ask_interactive(args, defaults):
+    """Fill None promptable options from defaults: prompt on tty (showing
+    yaml/built-in defaults), silent fill otherwise.
+    CLI-provided values are never re-asked."""
+    given = {k for k in PROMPT_DEFAULTS if getattr(args, k, None) is not None}
+    if not sys.stdin.isatty():
+        for k in PROMPT_DEFAULTS:
+            if getattr(args, k, None) is None:
+                setattr(args, k, defaults[k])
+        return
+    print("\n== Run settings (Enter = default, CLI flags skip asking) ==")
+    if "device" not in given:
+        args.device = _ask("device", defaults["device"])
+    if "backend" not in given:
+        args.backend = _ask("backend", defaults["backend"],
+                            cast=str.upper, allowed=ALLOWED_BACKENDS)
+    if "suites" not in given:
+        while True:
+            raw = _ask("suites (auto,manual,official / all)",
+                       defaults["suites"])
+            picked = ["auto", "manual", "official"] \
+                if raw.strip().lower() == "all" else \
+                [s.strip() for s in raw.split(",") if s.strip()]
+            if picked and all(s in ALLOWED_SUITES for s in picked):
+                args.suites = ",".join(picked)
+                break
+            print(f"    allowed: auto,manual,official or all")
+    advanced = [k for k in ("frames", "reconnect_window", "long_run",
+                            "answer", "filter", "outdir") if k not in given]
+    if advanced:
+        try:
+            more = input("  modify advanced "
+                         "(frames/reconnect/long-run/answer/filter/outdir)? [y/N]: "
+                         ).strip().lower()
+        except EOFError:
+            more = ""
+        if more in ("y", "yes"):
+            if "frames" in advanced:
+                args.frames = _ask("frames", defaults["frames"], cast=int)
+            if "reconnect_window" in advanced:
+                args.reconnect_window = _ask("reconnect-window (sec)",
+                                             defaults["reconnect_window"],
+                                             cast=int)
+            if "long_run" in advanced:
+                args.long_run = _ask("long-run (min, 0=skip)",
+                                     defaults["long_run"])
+            if "answer" in advanced:
+                args.answer = _ask("manual verdict p/f/s (empty=ask at runtime)",
+                                   defaults["answer"], allowed=("p", "f", "s"))
+            if "filter" in advanced:
+                args.filter = _ask("gtest filter (empty=all)", defaults["filter"])
+            if "outdir" in advanced:
+                args.outdir = _ask("outdir (empty=timestamped)", defaults["outdir"])
+    for k in PROMPT_DEFAULTS:
+        if getattr(args, k, None) is None:
+            setattr(args, k, defaults[k])
 
 
 def fetch_testdata(root, mode):
@@ -184,22 +366,70 @@ def fetch_testdata(root, mode):
         return False
 
 
+def ensure_openpyxl():
+    """Best-effort openpyxl for xlsx reports (json/log work without it)."""
+    try:
+        import openpyxl  # noqa: F401
+        print("[deps] openpyxl present")
+        return True
+    except ImportError:
+        pass
+    print("[deps] openpyxl missing, installing...")
+    pip = [sys.executable, "-m", "pip", "install", "-q", "openpyxl"]
+    # noble is EXTERNALLY-MANAGED: --break-system-packages first, then
+    # plain (venv/pipx), then --user.
+    for extra in (["--break-system-packages"], [], ["--user"]):
+        try:
+            subprocess.run(pip + extra, check=True, timeout=180,
+                           capture_output=True)
+            import openpyxl  # noqa: F401
+            print(f"[deps] openpyxl installed "
+                  f"({' '.join(extra) if extra else 'default flags'})")
+            return True
+        except Exception as e:
+            print(f"[deps] pip install {' '.join(extra) or '(default)'} "
+                  f"failed: {e}")
+            continue
+    print("[deps] WARN: openpyxl unavailable "
+          "(xlsx skipped, json/log still work)")
+    return False
+
+
 def main():
     args = parse_args()
-    if args.suites.strip().lower() == "all":
-        args.suites = ["auto", "manual", "official"]
-    else:
-        args.suites = [s.strip() for s in args.suites.split(",") if s.strip()]
-        bad = [s for s in args.suites if s not in ("auto", "manual", "official")]
-        if bad:
-            print(f"ERROR: unknown suites: {bad}") 
-            return 2
+    # Config file first (root unknown yet only when --config is relative and
+    # PREBUILT_ROOT unset; reloaded after root detection if needed).
+    cfg_path = args.config
+    if cfg_path and not os.path.isabs(cfg_path) and not os.path.isfile(cfg_path):
+        cfg_path = None  # resolve against prebuilt root below
 
     root = detect_root()
     if not root:
-        print("ERROR: not a prebuilt layout (bin/ not found).") 
+        print("ERROR: not a prebuilt layout (bin/ not found).")
         print("  Run from an unpacked prebuilt package, or set PREBUILT_ROOT,")
         print("  or use run_camera_tests.py in the source tree.")
+        return 2
+    if not cfg_path:
+        cfg_path = os.path.join(root, "run_config.prebuilt.yaml")
+    defaults = merge_defaults(load_prebuilt_config(cfg_path))
+    if cfg_path and os.path.isfile(cfg_path):
+        print(f"[config] {cfg_path}")
+    ask_interactive(args, defaults)   # CLI > interactive > yaml > built-ins
+    # Non-prompted infra flags resolve CLI > yaml > built-in.
+    if args.fetch_testdata is None:
+        args.fetch_testdata = defaults["fetch_testdata"]
+    if args.console_output is None:
+        args.console_output = defaults["console_output"]
+    if args.combined is None:
+        args.combined = defaults["combined"]
+    if isinstance(args.suites, str):
+        if args.suites.strip().lower() == "all":
+            args.suites = ["auto", "manual", "official"]
+        else:
+            args.suites = [s.strip() for s in args.suites.split(",") if s.strip()]
+    bad = [s for s in args.suites if s not in ("auto", "manual", "official")]
+    if bad:
+        print(f"ERROR: unknown suites: {bad}")
         return 2
 
     missing = check_env(root)
@@ -235,6 +465,8 @@ def main():
 
     report_dir = args.outdir or os.path.join(
         os.getcwd(), "report", datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+    if not args.dry_run:
+        ensure_openpyxl()
     plan = build_plan(args, root, os.path.abspath(report_dir))
 
     print(f"== prebuilt test run (root={root}) ==")

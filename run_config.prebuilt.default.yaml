@@ -1,0 +1,18 @@
+# Prebuilt runtime defaults for run_prebuilt_tests.py / run_test.sh.
+# Priority: CLI flags > interactive answers > this file > built-in defaults.
+# Only per-run options live here. cpp source/build/branch paths are fixed
+# to the package layout (bin/ + lib/) and intentionally not configurable.
+# Copy to run_config.prebuilt.yaml next to run_test.sh to customize.
+
+device: /dev/video0          # camera node or index N
+backend: V4L2                # ANY | V4L2 | GSTREAMER | FFMPEG
+suites: all                 # all | comma list of auto,manual,official (or YAML list)
+frames: 30                  # auto read-loop frames
+reconnect_window: 30        # manual USB reconnect window (seconds)
+long_run: 0                 # manual long-stability minutes (0 = skip)
+answer: null                # manual verdict p|f|s (null = ask at runtime)
+filter: null                # official gtest filter (null = all)
+outdir: null                # report dir (null = ./report/<timestamp>/)
+fetch_testdata: auto        # auto|full|slim|skip (official testdata when missing)
+console_output: true        # stream official gtest log live
+combined_report: true       # build combined_report.xlsx at the end

@@ -25,6 +25,19 @@ x86_64 包上 arm64 會直接報錯。
 ./run_test.sh --suites official --filter '*videoio_v4l2*'       # 需先有 opencv_extra/testdata（§2）
 ```
 
+互動：直接跑 `./run_test.sh` 會依序問 `device / backend / suites`
+（Enter = 預設），再問是否改進階參數（`frames/reconnect/long-run/answer/filter/outdir`）；
+CLI 有給的項自動跳過不問；非 tty（CI/pipe）全用預設靜默跑。
+cpp 路徑、`PREBUILT_ROOT`、testdata URL 等基礎設施是固定的，不問。
+
+設定檔 `run_config.prebuilt.yaml`（與 `run_test.sh` 同目錄，含全部 per-run 預設）：
+優先順序 **CLI > 互動輸入 > 此檔 > 內建**。只放會變的選項
+（`device/backend/suites/frames/reconnect_window/long_run/answer/filter/outdir/fetch_testdata/console_output/combined_report`），
+cpp 路徑故意不可配。寫壞的值會 WARN 並退回預設。
+
+附帶：啟動時自動補 `openpyxl`（缺就 pip 裝，失敗則跳過 xlsx、json/log 照跑）；
+official 的 gtest log 預設 live 印出（`--no-console-output` 可關）。
+
 單跑各套件：
 
 ```bash
