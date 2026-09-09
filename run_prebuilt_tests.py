@@ -128,8 +128,60 @@ def parse_args():
     ap.add_argument("--console-output", action="store_true")
     ap.add_argument("--no-combined", dest="combined", action="store_false",
                     default=True)
+    ap.add_argument("--fetch-testdata", default="auto",
+                    choices=["auto", "full", "slim", "skip"],
+                    help="when official is selected but testdata is missing: "
+                         "auto/full fetch it via git sparse-checkout "
+                         "(default: auto=full), slim fetches ~33M subset, "
+                         "skip errors out instead")
     ap.add_argument("--dry-run", action="store_true")
     return ap.parse_args()
+
+
+EXTRA_URL = "https://github.com/opencv/opencv_extra.git"
+
+
+def fetch_testdata(root, mode):
+    """Sparse-checkout opencv_extra testdata into <root>/opencv_extra.
+
+    mode full: testdata/cv + testdata/highgui (~389M).
+    mode slim: highgui + cv/video + cv/tracking (~33M, what videoio reads).
+    Returns True on success.
+    """
+    extra = os.path.join(root, "opencv_extra")
+    if mode == "slim":
+        wants = ["testdata/highgui", "testdata/cv/video", "testdata/cv/tracking"]
+    else:
+        wants = ["testdata/cv", "testdata/highgui"]
+    try:
+        if not os.path.isdir(os.path.join(extra, ".git")):
+            print(f"[testdata] cloning opencv_extra -> {extra} ({mode})")
+            subprocess.run(["git", "clone", "--depth", "1",
+                            "--filter=blob:none", "--sparse",
+                            EXTRA_URL, extra], check=True)
+        else:
+            print(f"[testdata] using existing clone at {extra} ({mode})")
+        # sparse-checkout set (modern git) with fallback to add
+        r = subprocess.run(["git", "-C", extra, "sparse-checkout", "set",
+                            *wants], capture_output=True, text=True)
+        if r.returncode != 0:
+            for w in wants:
+                subprocess.run(["git", "-C", extra, "sparse-checkout",
+                                "add", w], check=True)
+        ok = all(os.path.isdir(os.path.join(extra, p)) for p in
+                 (["testdata/highgui", "testdata/cv"] if mode == "slim"
+                  else ["testdata/cv", "testdata/highgui"]))
+        if ok:
+            try:
+                size = subprocess.run(["du", "-sh", os.path.join(extra, "testdata")],
+                                      capture_output=True, text=True).stdout.split()[0]
+                print(f"[testdata] ready ({size})")
+            except Exception:
+                print("[testdata] ready")
+        return ok
+    except (subprocess.CalledProcessError, OSError) as e:
+        print(f"[testdata] fetch failed: {e}")
+        return False
 
 
 def main():
@@ -154,13 +206,31 @@ def main():
     # official testdata only matters when official suite selected
     if "official" not in args.suites:
         missing = [m for m in missing if not m.startswith("opencv_extra/")]
-    if missing:
+    needs_testdata = any(m.startswith("opencv_extra/") for m in missing)
+    if needs_testdata and not args.dry_run:
+        mode = args.fetch_testdata
+        if mode == "auto":
+            mode = "full"
+        if mode == "skip":
+            print("ERROR: missing prerequisites in", root)
+            for m in missing:
+                print(f"  - {m}")
+            print("  Fetch testdata: bash install_prebuilt.sh --tarball <pkg> "
+                  "--prefix <this dir> --fetch-testdata full")
+            return 2
+        print(f"[testdata] missing, auto-fetching ({mode})...")
+        if fetch_testdata(root, mode):
+            missing = [m for m in missing
+                       if not (m.startswith("opencv_extra/") and
+                               os.path.isdir(os.path.join(root, m)))]
+        else:
+            print("  Fallback: bash install_prebuilt.sh --tarball <pkg> "
+                  "--prefix <this dir> --fetch-testdata full")
+    if missing and not (args.dry_run and
+                        all(m.startswith("opencv_extra/") for m in missing)):
         print("ERROR: missing prerequisites in", root)
         for m in missing:
             print(f"  - {m}")
-        if any(m.startswith("opencv_extra/") for m in missing):
-            print("  Fetch testdata: bash install_prebuilt.sh --tarball <pkg> "
-                  "--prefix <this dir> --fetch-testdata full")
         return 2
 
     report_dir = args.outdir or os.path.join(

@@ -41,7 +41,18 @@ binary + `lib/`，並跳過 `git/cmake/apt`。`--no-build` 可省略。
 `run_test_manual.sh` 吃 `-d/--item/--answer p|f|s/--outdir/--list`。
 產物：`report_cpp.json(+.xlsx)`、`report_manual_cpp.json(+.xlsx)`、`manual_evidence_cpp/`。
 
-## 2. 官方 gtest（需先抓 testdata，包內不含）
+## 2. 官方 gtest（testdata 自動抓，包內不含）
+
+選了 `official` 但 `opencv_extra/testdata` 缺失時，`run_test.sh` 會**自動抓**
+（`git sparse-checkout`，需外網），不用手動跑 `install_prebuilt.sh`：
+
+```bash
+./run_test.sh --device /dev/video0 --suites official
+# 缺 testdata → 自動抓 full（testdata/cv + testdata/highgui，~389M）→ 續跑
+
+./run_test.sh --suites official --fetch-testdata slim   # 只抓 videoio 實際用量（~33M）
+./run_test.sh --suites official --fetch-testdata skip   # 不抓，缺件直接 exit 2
+```
 
 ```bash
 # 任選其一：full 389M（含 cv/，過 preflight）/ slim ~33M（videoio 實際用量）
