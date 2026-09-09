@@ -66,7 +66,11 @@ for f in "$OPENCV_TEST_BUILD_DIR"/lib/libopencv_*.so*; do
   case "$f" in *.a) continue;; *) cp -a "$f" "$ROOT/lib/";; esac
 done
 
-# 3. test scripts (run without rebuild via --no-build / PREBUILT_ROOT)
+# 3b. Python suites (pure .py, need cv2+numpy on target; see install deps)
+mkdir -p "$ROOT/auto" "$ROOT/manual"
+cp -a "$HERE/auto/opencv_camera_api_test.py" "$ROOT/auto/"
+cp -a "$HERE/manual/"*.py "$ROOT/manual/"
+cp -a "$HERE/manual/manifest_manual.yaml" "$ROOT/manual/" 2>/dev/null || true
 cp -a "$HERE/auto_cpp/run_test.sh" "$ROOT/scripts/run_test_auto.sh"
 cp -a "$HERE/manual_cpp/run_test.sh" "$ROOT/scripts/run_test_manual.sh"
 cp -a "$HERE/official/run_official_videoio_test.py" "$ROOT/scripts/"

@@ -13,7 +13,7 @@ script assumes everything is already compiled and only runs tests:
     <root>/opencv_extra/testdata   (fetched at install time, full)
 
 Usage:
-  ./run_test.sh --device /dev/video0 [--suites auto,manual,official]
+  ./run_test.sh --device /dev/video0 [--suites auto,auto-py,manual,manual-py,official]
   python3 run_prebuilt_tests.py --dry-run   # show planned commands only
 
 Settings priority: CLI flags > interactive answers > run_config.prebuilt.yaml
@@ -42,17 +42,28 @@ def detect_root():
     return ""
 
 
-def check_env(root):
+def check_env(root, suites):
     """Return list of missing prerequisites (empty = ready)."""
     missing = []
-    for rel in ("bin/opencv_camera_api_test_cpp",
-                "bin/manual_suite",
-                "bin/opencv_test_videoio"):
-        if not os.path.isfile(os.path.join(root, rel)):
-            missing.append(rel)
-    for sub in ("testdata/cv", "testdata/highgui"):
-        if not os.path.isdir(os.path.join(root, "opencv_extra", sub)):
-            missing.append(f"opencv_extra/{sub}")
+    if "auto" in suites and not os.path.isfile(
+            os.path.join(root, "bin", "opencv_camera_api_test_cpp")):
+        missing.append("bin/opencv_camera_api_test_cpp")
+    if "manual" in suites and not os.path.isfile(
+            os.path.join(root, "bin", "manual_suite")):
+        missing.append("bin/manual_suite")
+    if "official" in suites and not os.path.isfile(
+            os.path.join(root, "bin", "opencv_test_videoio")):
+        missing.append("bin/opencv_test_videoio")
+    if "auto-py" in suites and not os.path.isfile(
+            os.path.join(root, "auto", "opencv_camera_api_test.py")):
+        missing.append("auto/opencv_camera_api_test.py")
+    if "manual-py" in suites and not os.path.isfile(
+            os.path.join(root, "manual", "run_manual_suite.py")):
+        missing.append("manual/run_manual_suite.py")
+    if "official" in suites:
+        for sub in ("testdata/cv", "testdata/highgui"):
+            if not os.path.isdir(os.path.join(root, "opencv_extra", sub)):
+                missing.append(f"opencv_extra/{sub}")
     return missing
 
 
@@ -85,6 +96,11 @@ def build_plan(args, root, report_dir):
                               "--device", args.device, "--backend", args.backend,
                               "--frames", str(args.frames),
                               "--outdir", report_dir, "--no-build"]))
+    if "auto-py" in args.suites:
+        plan.append(("auto-py", [py, "-u", os.path.join(root, "auto", "opencv_camera_api_test.py"),
+                                 "--device", args.device, "--backend", args.backend,
+                                 "--frames", str(args.frames),
+                                 "--outdir", report_dir]))
     if "manual" in args.suites:
         cmd = ["bash", os.path.join(root, "scripts", "run_test_manual.sh"),
                "-d", args.device,
@@ -95,6 +111,17 @@ def build_plan(args, root, report_dir):
         if args.answer:
             cmd += ["--answer", args.answer]
         plan.append(("manual", cmd))
+    if "manual-py" in args.suites:
+        cmd = [py, "-u", os.path.join(root, "manual", "run_manual_suite.py"),
+               "--device", args.device,
+               "--reconnect-window", str(args.reconnect_window),
+               "--long-run", str(args.long_run),
+               "--report", os.path.join(report_dir, "report_manual.json"),
+               "--excel-dir", report_dir,
+               "--evidence", os.path.join(report_dir, "manual_evidence")]
+        if args.answer:
+            cmd += ["--answer", args.answer]
+        plan.append(("manual-py", cmd))
     if "official" in args.suites:
         cmd = [py, "-u", os.path.join(root, "scripts", "run_official_videoio_test.py"),
                "-e", root, "-b", root, "-d", args.device, "-o", report_dir]
@@ -106,7 +133,9 @@ def build_plan(args, root, report_dir):
     if args.combined:
         plan.append(("combined",
                      [py, "-u", os.path.join(root, "scripts", "generate_combined_report.py"),
+                      "--auto", os.path.join(report_dir, "report_auto.json"),
                       "--auto-cpp", os.path.join(report_dir, "report_cpp.json"),
+                      "--manual", os.path.join(report_dir, "report_manual.json"),
                       "--manual-cpp", os.path.join(report_dir, "report_manual_cpp.json"),
                       "--official-log", os.path.join(report_dir, "videoio_gtest.log"),
                       "--outdir", report_dir]))
@@ -121,7 +150,8 @@ def parse_args():
     ap.add_argument("--device", default=None, help="camera (default: /dev/video0)")
     ap.add_argument("--backend", default=None, help="ANY|V4L2|GSTREAMER|FFMPEG (default: V4L2)")
     ap.add_argument("--suites", default=None,
-                    help="comma list of auto,manual,official, or all (default: all)")
+                    help="comma list of auto,auto-py,manual,manual-py,official, "
+                         "or all = everything (default: all)")
     ap.add_argument("--outdir", default=None,
                     help="report dir (default: ./report/<timestamp>/)")
     ap.add_argument("--frames", type=int, default=None, help="(default: 30)")
@@ -169,7 +199,8 @@ PROMPT_DEFAULTS = {
     "outdir": None,
 }
 ALLOWED_BACKENDS = ("ANY", "V4L2", "GSTREAMER", "FFMPEG")
-ALLOWED_SUITES = ("auto", "manual", "official")
+ALLOWED_SUITES = ("auto", "auto-py", "manual", "manual-py", "official")
+ALL_SUITES = ["auto", "auto-py", "manual", "manual-py", "official"]
 CONFIG_KEYS = ("device", "backend", "suites", "frames", "reconnect_window",
                "long_run", "answer", "filter", "outdir", "fetch_testdata",
                "console_output", "combined_report")
@@ -283,15 +314,15 @@ def ask_interactive(args, defaults):
                             cast=str.upper, allowed=ALLOWED_BACKENDS)
     if "suites" not in given:
         while True:
-            raw = _ask("suites (auto,manual,official / all)",
+            raw = _ask("suites (auto,auto-py,manual,manual-py,official / all)",
                        defaults["suites"])
-            picked = ["auto", "manual", "official"] \
+            picked = list(ALL_SUITES) \
                 if raw.strip().lower() == "all" else \
                 [s.strip() for s in raw.split(",") if s.strip()]
             if picked and all(s in ALLOWED_SUITES for s in picked):
                 args.suites = ",".join(picked)
                 break
-            print(f"    allowed: auto,manual,official or all")
+            print(f"    allowed: auto,auto-py,manual,manual-py,official or all")
     advanced = [k for k in ("frames", "reconnect_window", "long_run",
                             "answer", "filter", "outdir") if k not in given]
     if advanced:
@@ -375,23 +406,52 @@ def ensure_openpyxl():
     except ImportError:
         pass
     print("[deps] openpyxl missing, installing...")
-    pip = [sys.executable, "-m", "pip", "install", "-q", "openpyxl"]
+    if not _pip_install("openpyxl"):
+        print("[deps] WARN: openpyxl unavailable "
+              "(xlsx skipped, json/log still work)")
+        return False
+    print("[deps] openpyxl installed")
+    return True
+
+
+def _pip_install(*pkgs):
+    """pip install with --break-system-packages first (noble is
+    EXTERNALLY-MANAGED), then plain, then --user. Logs each attempt."""
+    pip = [sys.executable, "-m", "pip", "install", "-q", *pkgs]
     # noble is EXTERNALLY-MANAGED: --break-system-packages first, then
     # plain (venv/pipx), then --user.
     for extra in (["--break-system-packages"], [], ["--user"]):
         try:
-            subprocess.run(pip + extra, check=True, timeout=180,
+            subprocess.run(pip + extra, check=True, timeout=300,
                            capture_output=True)
-            import openpyxl  # noqa: F401
-            print(f"[deps] openpyxl installed "
-                  f"({' '.join(extra) if extra else 'default flags'})")
             return True
         except Exception as e:
-            print(f"[deps] pip install {' '.join(extra) or '(default)'} "
+            print(f"[deps] pip install {' '.join([*pkgs, *extra])} "
                   f"failed: {e}")
             continue
-    print("[deps] WARN: openpyxl unavailable "
-          "(xlsx skipped, json/log still work)")
+    return False
+
+
+def ensure_py_cv2():
+    """Best-effort cv2+numpy for auto-py/manual-py (headless: no libGL need).
+    Hard requirement when py suites are selected."""
+    try:
+        import cv2  # noqa: F401
+        import numpy  # noqa: F401
+        import cv2 as _cv2
+        print(f"[deps] cv2 present ({_cv2.__version__})")
+        return True
+    except ImportError:
+        pass
+    print("[deps] cv2/numpy missing, installing opencv-python-headless+numpy...")
+    if _pip_install("opencv-python-headless", "numpy"):
+        try:
+            import cv2  # noqa: F401
+            import numpy  # noqa: F401
+            print("[deps] cv2 installed")
+            return True
+        except ImportError as e:
+            print(f"[deps] cv2 still unimportable: {e}")
     return False
 
 
@@ -424,18 +484,15 @@ def main():
         args.combined = defaults["combined"]
     if isinstance(args.suites, str):
         if args.suites.strip().lower() == "all":
-            args.suites = ["auto", "manual", "official"]
+            args.suites = list(ALL_SUITES)
         else:
             args.suites = [s.strip() for s in args.suites.split(",") if s.strip()]
-    bad = [s for s in args.suites if s not in ("auto", "manual", "official")]
+    bad = [s for s in args.suites if s not in ALLOWED_SUITES]
     if bad:
         print(f"ERROR: unknown suites: {bad}")
         return 2
 
-    missing = check_env(root)
-    # official testdata only matters when official suite selected
-    if "official" not in args.suites:
-        missing = [m for m in missing if not m.startswith("opencv_extra/")]
+    missing = check_env(root, args.suites)
     needs_testdata = any(m.startswith("opencv_extra/") for m in missing)
     if needs_testdata and not args.dry_run:
         mode = args.fetch_testdata
@@ -467,6 +524,11 @@ def main():
         os.getcwd(), "report", datetime.now().strftime("%Y-%m-%d-%H%M%S"))
     if not args.dry_run:
         ensure_openpyxl()
+        if ("auto-py" in args.suites or "manual-py" in args.suites) \
+                and not ensure_py_cv2():
+            print("ERROR: auto-py/manual-py need cv2+numpy; "
+                  "install failed (see above) or drop those suites.")
+            return 2
     plan = build_plan(args, root, os.path.abspath(report_dir))
 
     print(f"== prebuilt test run (root={root}) ==")

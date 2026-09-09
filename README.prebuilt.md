@@ -20,10 +20,17 @@ x86_64 包上 arm64 會直接報錯。
 總指揮（一鍵跑全套，無任何編譯選項；cpp 路徑全固定為包內 `bin/` + `lib/`）：
 
 ```bash
-./run_test.sh --device /dev/video0                              # auto+manual+official+combined
+./run_test.sh --device /dev/video0                              # all = auto,auto-py,manual,manual-py,official+combined
 ./run_test.sh --device /dev/video0 --suites auto,manual --dry-run
 ./run_test.sh --suites official --filter '*videoio_v4l2*'       # 需先有 opencv_extra/testdata（§2）
+./run_test.sh --suites auto-py --frames 60                      # 只要 Python 版
 ```
+
+`auto-py` / `manual-py` 跑包內 `auto/*.py` / `manual/*.py`（需 `cv2+numpy`，
+`run_test.sh` 啟動時自動 `pip install opencv-python-headless numpy` 補上；
+注意測的是 pip 的 cv2，不是包內 selfbuild）。
+`install_prebuilt.sh`（一律 `sudo`，root 也一樣）會先裝好：
+`pip install opencv-python-headless numpy openpyxl`。
 
 互動：直接跑 `./run_test.sh` 會依序問 `device / backend / suites`
 （Enter = 預設），再問是否改進階參數（`frames/reconnect/long-run/answer/filter/outdir`）；

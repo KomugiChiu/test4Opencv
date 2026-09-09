@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install prebuilt tarball on target (arm64) + optionally fetch testdata.
-# Usage:
+# Usage (always with sudo, even as root):
 #   sudo scripts/install_prebuilt.sh --tarball dist/*.tar.gz --prefix /opt/camera-toolkit [--fetch-testdata full|slim|skip] [--yes]
 set -euo pipefail
 
@@ -36,16 +36,17 @@ echo "  testdata: $FETCH"
 if [[ $NO_APT -eq 1 ]]; then
   echo "[deps] skipped (--no-apt; for running straight from install/ folder)"
 elif command -v apt-get >/dev/null 2>&1; then
-  echo "[deps] apt install"
+  echo "[deps] apt install (via sudo, even as root)"
   DEPS="libavcodec60 libavformat60 libavutil58 libswscale7 libtiff6 libopenexr-3-1-30 libyaml-cpp0.8 python3-yaml python3-pip v4l-utils"
   if [[ $YES -eq 1 ]]; then
-    apt-get update -qq && apt-get install -y $DEPS
+    sudo apt-get update -qq && sudo apt-get install -y $DEPS
   else
     echo "  will install: $DEPS"
     read -rp "  apt install now? [Y/n]: " ans; ans=${ans:-Y}
-    [[ "$ans" =~ ^[Yy]$ ]] && { apt-get update -qq && apt-get install -y $DEPS; } || echo "  skip apt (may fail ldd later)"
+    [[ "$ans" =~ ^[Yy]$ ]] && { sudo apt-get update -qq && sudo apt-get install -y $DEPS; } || echo "  skip apt (may fail ldd later)"
   fi
   python3 -c "import openpyxl" 2>/dev/null || pip3 install --break-system-packages -q openpyxl || pip3 install -q openpyxl || echo "WARN: openpyxl install failed (xlsx disabled, json/log still work)"
+  python3 -c "import cv2, numpy" 2>/dev/null || pip3 install --break-system-packages -q opencv-python-headless numpy || pip3 install -q opencv-python-headless numpy || echo "WARN: cv2/numpy install failed (auto-py/manual-py unavailable)"
 else
   echo "[deps] no apt-get, skipping"
 fi
