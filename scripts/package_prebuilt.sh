@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Package prebuilt binaries into a relocatable tarball (no testdata, no source).
-# Usage: scripts/package_prebuilt.sh [--arch native|aarch64] [--build-dir DIR] [--auto-build DIR] [--manual-build DIR] [--out dist/NAME.tar.gz]
+# Usage: scripts/package_prebuilt.sh [--arch native|aarch64] [--opencv-test-build-dir DIR] [--auto-build DIR] [--manual-build DIR] [--out dist/NAME.tar.gz]
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARCH_ARG=""
-BUILD_DIR=""
+OPENCV_TEST_BUILD_DIR=""
 AUTO_B=""
 MANUAL_B=""
 OUT=""
@@ -12,7 +12,7 @@ OUT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --arch) ARCH_ARG="$2"; shift 2 ;;
-    --build-dir) BUILD_DIR="$2"; shift 2 ;;
+    --opencv-test-build-dir) OPENCV_TEST_BUILD_DIR="$2"; shift 2 ;;
     --auto-build) AUTO_B="$2"; shift 2 ;;
     --manual-build) MANUAL_B="$2"; shift 2 ;;
     --out|-o) OUT="$2"; shift 2 ;;
@@ -21,24 +21,24 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 # Defaults follow build_prebuilt.sh layout.
-if [[ -z "$BUILD_DIR" ]]; then
-  [[ "$ARCH_ARG" == "aarch64" ]] && BUILD_DIR="$HERE/build/aarch64" || BUILD_DIR="$HERE/build/latest"
+if [[ -z "$OPENCV_TEST_BUILD_DIR" ]]; then
+  [[ "$ARCH_ARG" == "aarch64" ]] && OPENCV_TEST_BUILD_DIR="$HERE/build/aarch64" || OPENCV_TEST_BUILD_DIR="$HERE/build/latest"
 fi
 if [[ -z "$AUTO_B" ]]; then
-  [[ "$BUILD_DIR" == *aarch64* ]] && AUTO_B="$HERE/auto_cpp/build-aarch64" || AUTO_B="$HERE/auto_cpp/build"
+  [[ "$OPENCV_TEST_BUILD_DIR" == *aarch64* ]] && AUTO_B="$HERE/auto_cpp/build-aarch64" || AUTO_B="$HERE/auto_cpp/build"
 fi
 if [[ -z "$MANUAL_B" ]]; then
-  [[ "$BUILD_DIR" == *aarch64* ]] && MANUAL_B="$HERE/manual_cpp/build-aarch64" || MANUAL_B="$HERE/manual_cpp/build"
+  [[ "$OPENCV_TEST_BUILD_DIR" == *aarch64* ]] && MANUAL_B="$HERE/manual_cpp/build-aarch64" || MANUAL_B="$HERE/manual_cpp/build"
 fi
 
-if [[ -f "$BUILD_DIR/VERSION.json" ]]; then
-  OCV_VER="$(grep -oE '"opencv_version": "[^"]*"' "$BUILD_DIR/VERSION.json" | cut -d'"' -f4)"
+if [[ -f "$OPENCV_TEST_BUILD_DIR/VERSION.json" ]]; then
+  OCV_VER="$(grep -oE '"opencv_version": "[^"]*"' "$OPENCV_TEST_BUILD_DIR/VERSION.json" | cut -d'"' -f4)"
 fi
-[[ -z "${OCV_VER:-}" ]] && OCV_VER="$("$BUILD_DIR/bin/opencv_version" 2>/dev/null || echo 5.1.0-dev)"
+[[ -z "${OCV_VER:-}" ]] && OCV_VER="$("$OPENCV_TEST_BUILD_DIR/bin/opencv_version" 2>/dev/null || echo 5.1.0-dev)"
 if [[ -n "$ARCH_ARG" ]]; then
   ARCH="$ARCH_ARG"
   [[ "$ARCH" == "native" ]] && ARCH="$(uname -m)"
-elif [[ "$BUILD_DIR" == *aarch64* ]]; then
+elif [[ "$OPENCV_TEST_BUILD_DIR" == *aarch64* ]]; then
   ARCH="aarch64"
 else
   ARCH="$(uname -m)"
@@ -50,7 +50,7 @@ ROOT="$STAGE/camera-toolkit"
 mkdir -p "$ROOT/bin" "$ROOT/lib" "$ROOT/scripts" "$ROOT/manual_cpp"
 
 echo "== package =="
-echo "  build : $BUILD_DIR"
+echo "  build : $OPENCV_TEST_BUILD_DIR"
 echo "  out   : $OUT"
 
 # 1. binaries
@@ -58,11 +58,11 @@ cp -a "$AUTO_B/opencv_camera_api_test_cpp" "$ROOT/bin/"
 cp -a "$MANUAL_B/manual_suite" "$MANUAL_B/manual_cpp" \
       "$MANUAL_B/exposure_check" "$MANUAL_B/autofocus_check" \
       "$MANUAL_B/white_balance_check" "$MANUAL_B/reconnect_test" "$ROOT/bin/"
-cp -a "$BUILD_DIR/bin/opencv_test_videoio" "$ROOT/bin/"
-[[ -f "$BUILD_DIR/bin/opencv_version" ]] && cp -a "$BUILD_DIR/bin/opencv_version" "$ROOT/bin/" || true
+cp -a "$OPENCV_TEST_BUILD_DIR/bin/opencv_test_videoio" "$ROOT/bin/"
+[[ -f "$OPENCV_TEST_BUILD_DIR/bin/opencv_version" ]] && cp -a "$OPENCV_TEST_BUILD_DIR/bin/opencv_version" "$ROOT/bin/" || true
 
 # 2. selfbuild libs (versioned .so chain only, no .a / cmake junk)
-for f in "$BUILD_DIR"/lib/libopencv_*.so*; do
+for f in "$OPENCV_TEST_BUILD_DIR"/lib/libopencv_*.so*; do
   case "$f" in *.a) continue;; *) cp -a "$f" "$ROOT/lib/";; esac
 done
 
@@ -77,7 +77,7 @@ cp -a "$HERE/generate_combined_report.py" "$ROOT/scripts/"
 cp -a "$HERE/run_cpp_tests.sh" "$ROOT/scripts/" 2>/dev/null || true
 cp -a "$HERE/manual_cpp/manifest_manual.yaml" "$ROOT/manual_cpp/" 2>/dev/null || \
   cp -a "$HERE/manual/manifest_manual.yaml" "$ROOT/manual_cpp/" 2>/dev/null || true
-[[ -f "$BUILD_DIR/VERSION.json" ]] && cp -a "$BUILD_DIR/VERSION.json" "$ROOT/"
+[[ -f "$OPENCV_TEST_BUILD_DIR/VERSION.json" ]] && cp -a "$OPENCV_TEST_BUILD_DIR/VERSION.json" "$ROOT/"
 cp -a "$HERE/run_config.default.yaml" "$ROOT/run_config.prebuilt.yaml"
 cp -a "$HERE/README.prebuilt.md" "$ROOT/README.md"
 cp -a "$HERE/run_prebuilt_tests.py" "$HERE/run_test.sh" "$ROOT/"

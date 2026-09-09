@@ -2,7 +2,7 @@
 # ARCH=native (default) or ARCH=aarch64 for x86_64 -> aarch64 cross.
 # make install assembles ./install/ (relocatable, runnable in place, no /opt needed).
 ARCH ?= native
-BUILD_DIR ?= $(if $(filter aarch64,$(ARCH)),build/aarch64,build/latest)
+OPENCV_TEST_BUILD_DIR ?= $(if $(filter aarch64,$(ARCH)),build/aarch64,build/latest)
 JOBS ?= $(shell nproc)
 PREFIX ?= /opt/camera-toolkit
 INSTALL_DIR ?= install
@@ -12,16 +12,16 @@ help:
 	@echo "targets: prebuild | package | verify | verify-cross | install | clean | clean-all  (ARCH=native|aarch64)"
 
 prebuild:
-	bash scripts/build_prebuilt.sh --arch $(ARCH) --build-dir $(BUILD_DIR) --jobs $(JOBS)
+	bash scripts/build_prebuilt.sh --arch $(ARCH) --opencv-test-build-dir $(OPENCV_TEST_BUILD_DIR) --jobs $(JOBS)
 
 package:
-	bash scripts/package_prebuilt.sh --arch $(ARCH) --build-dir $(BUILD_DIR)
+	bash scripts/package_prebuilt.sh --arch $(ARCH) --opencv-test-build-dir $(OPENCV_TEST_BUILD_DIR)
 
 verify:
-	bash scripts/verify_prebuilt.sh --build-dir $(BUILD_DIR)
+	bash scripts/verify_prebuilt.sh --opencv-test-build-dir $(OPENCV_TEST_BUILD_DIR)
 
 verify-cross:
-	bash scripts/verify_cross.sh --build-dir $(BUILD_DIR)
+	bash scripts/verify_cross.sh --opencv-test-build-dir $(OPENCV_TEST_BUILD_DIR)
 
 install: package
 	bash scripts/install_prebuilt.sh --tarball "$$(ls -t dist/*.tar.gz | head -n 1)" \

@@ -3,9 +3,9 @@
 # Default native (host arch). Cross: --arch aarch64 (x86_64 -> aarch64 via
 # cmake/toolchain-aarch64.cmake + apt multiarch arm64 dev packages).
 # Usage:
-#   scripts/build_prebuilt.sh [--arch native|aarch64] [--src-dir DIR] [--build-dir DIR] [--jobs N] [--branch B]
-# Defaults: --arch native, --src-dir ./opencv_source_code/latest, --build-dir ./build/latest (native)
-#           or ./build/aarch64 (cross, unless --build-dir overrides).
+#   scripts/build_prebuilt.sh [--arch native|aarch64] [--src-dir DIR] [--opencv-test-build-dir DIR] [--jobs N] [--branch B]
+# Defaults: --arch native, --src-dir ./opencv_source_code/latest, --opencv-test-build-dir ./build/latest (native)
+#           or ./build/aarch64 (cross, unless --opencv-test-build-dir overrides).
 # Does NOT delete residue; fails if build dir contains stale Ubuntu20 ABI
 # (libavcodec.so.58) — user cleans manually per policy.
 set -euo pipefail
@@ -15,7 +15,7 @@ RPATH_FRAG="$HERE/cmake/arm64-native.cmake"
 CROSS_TC="$HERE/cmake/toolchain-aarch64.cmake"
 ARCH="native"
 SRC_DIR="$HERE/opencv_source_code/latest"
-BUILD_DIR=""
+OPENCV_TEST_BUILD_DIR=""
 JOBS="$(nproc)"
 BRANCH=""
 INSTALL_DEPS=0
@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --arch) ARCH="$2"; shift 2 ;;
     --src-dir) SRC_DIR="$2"; shift 2 ;;
-    --build-dir) BUILD_DIR="$2"; shift 2 ;;
+    --opencv-test-build-dir) OPENCV_TEST_BUILD_DIR="$2"; shift 2 ;;
     --jobs|-j) JOBS="$2"; shift 2 ;;
     --branch) BRANCH="$2"; shift 2 ;;
     --install-deps) INSTALL_DEPS=1; shift ;;
@@ -33,8 +33,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ "$ARCH" == "native" || "$ARCH" == "aarch64" ]] || { echo "ERROR: --arch must be native|aarch64" >&2; exit 2; }
-if [[ -z "$BUILD_DIR" ]]; then
-  [[ "$ARCH" == "aarch64" ]] && BUILD_DIR="$HERE/build/aarch64" || BUILD_DIR="$HERE/build/latest"
+if [[ -z "$OPENCV_TEST_BUILD_DIR" ]]; then
+  [[ "$ARCH" == "aarch64" ]] && OPENCV_TEST_BUILD_DIR="$HERE/build/aarch64" || OPENCV_TEST_BUILD_DIR="$HERE/build/latest"
 fi
 TOOLCHAIN_ARGS=(-C "$RPATH_FRAG")
 if [[ "$ARCH" == "aarch64" ]]; then
@@ -44,7 +44,7 @@ fi
 echo "== prebuild =="
 echo "  arch  : $ARCH"
 echo "  src   : $SRC_DIR"
-echo "  build : $BUILD_DIR"
+echo "  build : $OPENCV_TEST_BUILD_DIR"
 echo "  jobs  : $JOBS"
 echo "  host  : $(uname -m) $(lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY | cut -d= -f2)"
 
@@ -98,24 +98,24 @@ else
 fi
 
 # 1. Guard: refuse to incremental-build over Ubuntu20 residue (native ldd only)
-if [[ "$ARCH" == "native" && -f "$BUILD_DIR/lib/libopencv_videoio.so.5.1.0" ]]; then
-  if ldd "$BUILD_DIR/lib/libopencv_videoio.so.5.1.0" 2>/dev/null | grep -q "not found"; then
-    echo "ERROR: $BUILD_DIR contains stale binaries (ldd not found)." >&2
+if [[ "$ARCH" == "native" && -f "$OPENCV_TEST_BUILD_DIR/lib/libopencv_videoio.so.5.1.0" ]]; then
+  if ldd "$OPENCV_TEST_BUILD_DIR/lib/libopencv_videoio.so.5.1.0" 2>/dev/null | grep -q "not found"; then
+    echo "ERROR: $OPENCV_TEST_BUILD_DIR contains stale binaries (ldd not found)." >&2
     echo "  Policy: user cleans manually, e.g. mv build/latest build/latest.ubuntu20.bak" >&2
     exit 2
   fi
 fi
 
 # 2. OpenCV selfbuild (shared with official suite)
-echo "[opencv] cmake $SRC_DIR -> $BUILD_DIR (arch=$ARCH)"
+echo "[opencv] cmake $SRC_DIR -> $OPENCV_TEST_BUILD_DIR (arch=$ARCH)"
 # shellcheck disable=SC2089
-cmake -S "$SRC_DIR" -B "$BUILD_DIR" \
+cmake -S "$SRC_DIR" -B "$OPENCV_TEST_BUILD_DIR" \
   "${TOOLCHAIN_ARGS[@]}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_LIST=core,imgproc,imgcodecs,videoio,highgui,ts \
   -DBUILD_TESTS=ON -DBUILD_PERF_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_opencv_apps=OFF \
   -DWITH_IPP=OFF -DWITH_ITT=OFF -DWITH_OPENCL=OFF -DWITH_GTK=OFF
-cmake --build "$BUILD_DIR" --target opencv_test_videoio -j"$JOBS"
+cmake --build "$OPENCV_TEST_BUILD_DIR" --target opencv_test_videoio -j"$JOBS"
 
 # Cross uses isolated consumer build dirs to avoid clobbering native outputs.
 AUTO_B="$HERE/auto_cpp/build"; MANUAL_B="$HERE/manual_cpp/build"
@@ -129,8 +129,8 @@ cmake -S "$HERE/auto_cpp" -B "$AUTO_B" \
   "${TOOLCHAIN_ARGS[@]}" \
   -DCPP_OPENCV_SOURCE=selfbuild \
   -DOPENCV_SOURCE_DIR="$SRC_DIR" \
-  -DOPENCV_BUILD_DIR="$BUILD_DIR" \
-  -DOpenCV_DIR="$BUILD_DIR"
+  -DOPENCV_BUILD_DIR="$OPENCV_TEST_BUILD_DIR" \
+  -DOpenCV_DIR="$OPENCV_TEST_BUILD_DIR"
 cmake --build "$AUTO_B" -j"$JOBS"
 
 # 4. manual_cpp (relocatable $ORIGIN)
@@ -139,27 +139,27 @@ cmake -S "$HERE/manual_cpp" -B "$MANUAL_B" \
   "${TOOLCHAIN_ARGS[@]}" \
   -DCPP_OPENCV_SOURCE=selfbuild \
   -DOPENCV_SOURCE_DIR="$SRC_DIR" \
-  -DOPENCV_BUILD_DIR="$BUILD_DIR" \
-  -DOpenCV_DIR="$BUILD_DIR" \
-  -DCMAKE_PREFIX_PATH="$BUILD_DIR"
+  -DOPENCV_BUILD_DIR="$OPENCV_TEST_BUILD_DIR" \
+  -DOpenCV_DIR="$OPENCV_TEST_BUILD_DIR" \
+  -DCMAKE_PREFIX_PATH="$OPENCV_TEST_BUILD_DIR"
 cmake --build "$MANUAL_B" -j"$JOBS"
 
 # 5. sanity
 if [[ "$ARCH" == "aarch64" ]]; then
   echo "[check] cross arch (file, no ldd)"
   for f in "$AUTO_B/opencv_camera_api_test_cpp" "$MANUAL_B/manual_suite" \
-           "$BUILD_DIR/bin/opencv_test_videoio"; do
+           "$OPENCV_TEST_BUILD_DIR/bin/opencv_test_videoio"; do
     file "$f" | grep -q "ARM aarch64" && echo "  OK arch: $f" || { echo "  WRONG ARCH: $f"; file "$f"; exit 1; }
     if readelf -d "$f" 2>/dev/null | grep -q "not found"; then echo "  BROKEN: $f"; exit 1; fi
   done
-  echo "  run: bash scripts/verify_cross.sh --build-dir $BUILD_DIR --auto-build $AUTO_B --manual-build $MANUAL_B"
+  echo "  run: bash scripts/verify_cross.sh --opencv-test-build-dir $OPENCV_TEST_BUILD_DIR --auto-build $AUTO_B --manual-build $MANUAL_B"
 else
 echo "[check] ldd"
 missing=0
 for f in "$HERE/auto_cpp/build/opencv_camera_api_test_cpp" \
          "$HERE/manual_cpp/build/manual_suite" \
-         "$BUILD_DIR/bin/opencv_test_videoio" \
-         "$BUILD_DIR/lib/libopencv_videoio.so.5.1.0"; do
+         "$OPENCV_TEST_BUILD_DIR/bin/opencv_test_videoio" \
+         "$OPENCV_TEST_BUILD_DIR/lib/libopencv_videoio.so.5.1.0"; do
   if ldd "$f" 2>/dev/null | grep -q "not found"; then
     echo "  BROKEN: $f"; ldd "$f" | grep "not found" || true; missing=1
   else
@@ -181,19 +181,19 @@ _ocv_version_from_header() {
     # CV_VERSION_STATUS already carries its leading dash (e.g. "-dev")
     echo "${maj}.${min}.${rev:-0}${status:-}"
   else
-    grep -m1 -oE 'set\(OpenCV_VERSION "?[0-9][^" )]*' "$BUILD_DIR/OpenCVConfig.cmake" 2>/dev/null | grep -oE '[0-9].*' || echo "?"
+    grep -m1 -oE 'set\(OpenCV_VERSION "?[0-9][^" )]*' "$OPENCV_TEST_BUILD_DIR/OpenCVConfig.cmake" 2>/dev/null | grep -oE '[0-9].*' || echo "?"
   fi
 }
 if [[ "$ARCH" == "aarch64" ]]; then
   _QEMU="$(command -v qemu-aarch64-static || command -v qemu-aarch64 || echo)"
-  if [[ -n "$_QEMU" && -x "$BUILD_DIR/bin/opencv_version" ]]; then
-    OCV_VER="$($_QEMU -L / "$BUILD_DIR/bin/opencv_version" 2>/dev/null || _ocv_version_from_header)"
+  if [[ -n "$_QEMU" && -x "$OPENCV_TEST_BUILD_DIR/bin/opencv_version" ]]; then
+    OCV_VER="$($_QEMU -L / "$OPENCV_TEST_BUILD_DIR/bin/opencv_version" 2>/dev/null || _ocv_version_from_header)"
   else
     OCV_VER="$(_ocv_version_from_header)"
   fi
 else
-if [[ -x "$BUILD_DIR/bin/opencv_version" ]]; then
-OCV_VER="$("$BUILD_DIR/bin/opencv_version" 2>/dev/null || _ocv_version_from_header)"
+if [[ -x "$OPENCV_TEST_BUILD_DIR/bin/opencv_version" ]]; then
+OCV_VER="$("$OPENCV_TEST_BUILD_DIR/bin/opencv_version" 2>/dev/null || _ocv_version_from_header)"
 else
 OCV_VER="$(_ocv_version_from_header)"
 fi
@@ -202,7 +202,7 @@ OCV_COMMIT="$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || echo ?)"
 FFMPEG_VER="$(ffmpeg -version 2>/dev/null | head -n1 || echo ?)"
 EFFECTIVE_ARCH="$ARCH"
 [[ "$ARCH" == "aarch64" ]] && EFFECTIVE_ARCH="aarch64" || EFFECTIVE_ARCH="$(uname -m)"
-cat > "$BUILD_DIR/VERSION.json" <<EOF
+cat > "$OPENCV_TEST_BUILD_DIR/VERSION.json" <<EOF
 {
   "opencv_version": "$OCV_VER",
   "opencv_commit": "$OCV_COMMIT",
@@ -213,5 +213,5 @@ cat > "$BUILD_DIR/VERSION.json" <<EOF
   "built_at": "$(date -u +%FT%TZ)"
 }
 EOF
-echo "[done] $BUILD_DIR/VERSION.json"
-cat "$BUILD_DIR/VERSION.json"
+echo "[done] $OPENCV_TEST_BUILD_DIR/VERSION.json"
+cat "$OPENCV_TEST_BUILD_DIR/VERSION.json"
