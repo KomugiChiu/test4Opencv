@@ -46,7 +46,7 @@ elif command -v apt-get >/dev/null 2>&1; then
     [[ "$ans" =~ ^[Yy]$ ]] && { sudo apt-get update -qq && sudo apt-get install -y $DEPS; } || echo "  skip apt (may fail ldd later)"
   fi
   python3 -c "import openpyxl" 2>/dev/null || pip3 install --break-system-packages -q openpyxl || pip3 install -q openpyxl || echo "WARN: openpyxl install failed (xlsx disabled, json/log still work)"
-  python3 -c "import cv2, numpy" 2>/dev/null || pip3 install --break-system-packages -q opencv-python-headless numpy || pip3 install -q opencv-python-headless numpy || echo "WARN: cv2/numpy install failed (auto-py/manual-py unavailable)"
+  python3 -c "import cv2, numpy" 2>/dev/null || pip3 install --break-system-packages -q opencv-python-headless numpy || pip3 install -q opencv-python-headless numpy || echo "WARN: cv2/numpy install failed (auto/manual Python suites unavailable)"
 else
   echo "[deps] no apt-get, skipping"
 fi
@@ -66,7 +66,7 @@ rm -rf "$_TMPD"
 chmod +x "$PREFIX"/bin/* "$PREFIX"/scripts/* 2>/dev/null || true
 
 # shellcheck disable=SC1091
-source "$PREFIX/setup_vars.sh"
+source "$PREFIX/scripts/setup_vars.sh"
 
 # 2b. arch gate: refuse x86 pkg on arm64 and vice versa
 PKG_ARCH="$(file "$PREFIX/bin/opencv_camera_api_test_cpp" | grep -o -E "ARM aarch64|x86-64" || echo ?)"

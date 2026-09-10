@@ -6,7 +6,7 @@
 
 device: /dev/video0          # camera node or index N
 backend: V4L2                # ANY | V4L2 | GSTREAMER | FFMPEG
-suites: all                 # all = auto,auto-py,manual,manual-py,official | comma list (or YAML list)
+suites: all                 # all = auto,auto-cpp,manual,manual-cpp,official | comma list (or YAML list)
 frames: 30                  # auto read-loop frames
 reconnect_window: 30        # manual USB reconnect window (seconds)
 long_run: 0                 # manual long-stability minutes (0 = skip)

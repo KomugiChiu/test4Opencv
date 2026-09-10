@@ -20,13 +20,13 @@ x86_64 包上 arm64 會直接報錯。
 總指揮（一鍵跑全套，無任何編譯選項；cpp 路徑全固定為包內 `bin/` + `lib/`）：
 
 ```bash
-./run_test.sh --device /dev/video0                              # all = auto,auto-py,manual,manual-py,official+combined
-./run_test.sh --device /dev/video0 --suites auto,manual --dry-run
+./run_test.sh --device /dev/video0                              # all = auto,auto-cpp,manual,manual-cpp,official+combined
+./run_test.sh --device /dev/video0 --suites auto,manual-cpp --dry-run
 ./run_test.sh --suites official --filter '*videoio_v4l2*'       # 需先有 opencv_extra/testdata（§2）
-./run_test.sh --suites auto-py --frames 60                      # 只要 Python 版
+./run_test.sh --suites auto --frames 60                         # 只要 Python 版（auto=py，auto-cpp=C++）
 ```
 
-`auto-py` / `manual-py` 跑包內 `auto/*.py` / `manual/*.py`（需 `cv2+numpy`，
+`auto` / `manual` 跑包內 `auto/*.py` / `manual/*.py`（需 `cv2+numpy`，
 `run_test.sh` 啟動時自動 `pip install opencv-python-headless numpy` 補上；
 注意測的是 pip 的 cv2，不是包內 selfbuild）。
 `install_prebuilt.sh`（一律 `sudo`，root 也一樣）會先裝好：
@@ -54,7 +54,7 @@ official 的 gtest log 預設 live 印出（`--no-console-output` 可關）。
 
 `scripts/` 下的 wrapper 偵測到自己身處包內（`../bin/` 存在）會自動指向包內
 binary + `lib/`，並跳過 `git/cmake/apt`。`--no-build` 可省略。
-`setup_vars.sh` 是備用：`source ./setup_vars.sh` 會補 `LD_LIBRARY_PATH` +
+`setup_vars.sh` 是備用：`source ./scripts/setup_vars.sh` 會補 `LD_LIBRARY_PATH` +
 `PREBUILT_ROOT`（cross 件靠 `$ORIGIN` RPATH，本來就不需要它）。
 
 常用參數：`run_test_auto.sh` 吃 `--device/--backend/--frames/--width/--height/--fps/--outdir/--list-only`；

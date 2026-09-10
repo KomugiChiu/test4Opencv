@@ -13,7 +13,7 @@ script assumes everything is already compiled and only runs tests:
     <root>/opencv_extra/testdata   (fetched at install time, full)
 
 Usage:
-  ./run_test.sh --device /dev/video0 [--suites auto,auto-py,manual,manual-py,official]
+  ./run_test.sh --device /dev/video0 [--suites auto,auto-cpp,manual,manual-cpp,official]
   python3 run_prebuilt_tests.py --dry-run   # show planned commands only
 
 Settings priority: CLI flags > interactive answers > run_config.prebuilt.yaml
@@ -33,31 +33,33 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def detect_root():
-    """Prebuilt root: env wins, else own dir if bin/ sits beside it."""
+    """Prebuilt root: env wins, else own dir (or its parent, when this
+    script lives in <root>/scripts/) if bin/ sits beside it."""
     env = os.environ.get("PREBUILT_ROOT", "")
     if env and os.path.isfile(os.path.join(env, "bin", "opencv_camera_api_test_cpp")):
         return os.path.abspath(env)
-    if os.path.isfile(os.path.join(HERE, "bin", "opencv_camera_api_test_cpp")):
-        return HERE
+    for cand in (HERE, os.path.dirname(HERE)):
+        if os.path.isfile(os.path.join(cand, "bin", "opencv_camera_api_test_cpp")):
+            return cand
     return ""
 
 
 def check_env(root, suites):
     """Return list of missing prerequisites (empty = ready)."""
     missing = []
-    if "auto" in suites and not os.path.isfile(
+    if "auto-cpp" in suites and not os.path.isfile(
             os.path.join(root, "bin", "opencv_camera_api_test_cpp")):
         missing.append("bin/opencv_camera_api_test_cpp")
-    if "manual" in suites and not os.path.isfile(
+    if "manual-cpp" in suites and not os.path.isfile(
             os.path.join(root, "bin", "manual_suite")):
         missing.append("bin/manual_suite")
     if "official" in suites and not os.path.isfile(
             os.path.join(root, "bin", "opencv_test_videoio")):
         missing.append("bin/opencv_test_videoio")
-    if "auto-py" in suites and not os.path.isfile(
+    if "auto" in suites and not os.path.isfile(
             os.path.join(root, "auto", "opencv_camera_api_test.py")):
         missing.append("auto/opencv_camera_api_test.py")
-    if "manual-py" in suites and not os.path.isfile(
+    if "manual" in suites and not os.path.isfile(
             os.path.join(root, "manual", "run_manual_suite.py")):
         missing.append("manual/run_manual_suite.py")
     if "official" in suites:
@@ -91,17 +93,17 @@ def stream_run(cmd, tag, env):
 def build_plan(args, root, report_dir):
     py = sys.executable
     plan = []
-    if "auto" in args.suites:
-        plan.append(("auto", ["bash", os.path.join(root, "scripts", "run_test_auto.sh"),
+    if "auto-cpp" in args.suites:
+        plan.append(("auto-cpp", ["bash", os.path.join(root, "scripts", "run_test_auto.sh"),
                               "--device", args.device, "--backend", args.backend,
                               "--frames", str(args.frames),
                               "--outdir", report_dir, "--no-build"]))
-    if "auto-py" in args.suites:
-        plan.append(("auto-py", [py, "-u", os.path.join(root, "auto", "opencv_camera_api_test.py"),
+    if "auto" in args.suites:
+        plan.append(("auto", [py, "-u", os.path.join(root, "auto", "opencv_camera_api_test.py"),
                                  "--device", args.device, "--backend", args.backend,
                                  "--frames", str(args.frames),
                                  "--outdir", report_dir]))
-    if "manual" in args.suites:
+    if "manual-cpp" in args.suites:
         cmd = ["bash", os.path.join(root, "scripts", "run_test_manual.sh"),
                "-d", args.device,
                "--reconnect-window", str(args.reconnect_window),
@@ -110,8 +112,8 @@ def build_plan(args, root, report_dir):
             cmd += ["--long-run", str(args.long_run)]
         if args.answer:
             cmd += ["--answer", args.answer]
-        plan.append(("manual", cmd))
-    if "manual-py" in args.suites:
+        plan.append(("manual-cpp", cmd))
+    if "manual" in args.suites:
         cmd = [py, "-u", os.path.join(root, "manual", "run_manual_suite.py"),
                "--device", args.device,
                "--reconnect-window", str(args.reconnect_window),
@@ -121,7 +123,7 @@ def build_plan(args, root, report_dir):
                "--evidence", os.path.join(report_dir, "manual_evidence")]
         if args.answer:
             cmd += ["--answer", args.answer]
-        plan.append(("manual-py", cmd))
+        plan.append(("manual", cmd))
     if "official" in args.suites:
         cmd = [py, "-u", os.path.join(root, "scripts", "run_official_videoio_test.py"),
                "-e", root, "-b", root, "-d", args.device, "-o", report_dir]
@@ -150,7 +152,7 @@ def parse_args():
     ap.add_argument("--device", default=None, help="camera (default: /dev/video0)")
     ap.add_argument("--backend", default=None, help="ANY|V4L2|GSTREAMER|FFMPEG (default: V4L2)")
     ap.add_argument("--suites", default=None,
-                    help="comma list of auto,auto-py,manual,manual-py,official, "
+                    help="comma list of auto,auto-cpp,manual,manual-cpp,official, "
                          "or all = everything (default: all)")
     ap.add_argument("--outdir", default=None,
                     help="report dir (default: ./report/<timestamp>/)")
@@ -199,8 +201,8 @@ PROMPT_DEFAULTS = {
     "outdir": None,
 }
 ALLOWED_BACKENDS = ("ANY", "V4L2", "GSTREAMER", "FFMPEG")
-ALLOWED_SUITES = ("auto", "auto-py", "manual", "manual-py", "official")
-ALL_SUITES = ["auto", "auto-py", "manual", "manual-py", "official"]
+ALLOWED_SUITES = ("auto", "auto-cpp", "manual", "manual-cpp", "official")
+ALL_SUITES = ["auto", "auto-cpp", "manual", "manual-cpp", "official"]
 CONFIG_KEYS = ("device", "backend", "suites", "frames", "reconnect_window",
                "long_run", "answer", "filter", "outdir", "fetch_testdata",
                "console_output", "combined_report")
@@ -314,7 +316,7 @@ def ask_interactive(args, defaults):
                             cast=str.upper, allowed=ALLOWED_BACKENDS)
     if "suites" not in given:
         while True:
-            raw = _ask("suites (auto,auto-py,manual,manual-py,official / all)",
+            raw = _ask("suites (auto,auto-cpp,manual,manual-cpp,official / all)",
                        defaults["suites"])
             picked = list(ALL_SUITES) \
                 if raw.strip().lower() == "all" else \
@@ -322,7 +324,7 @@ def ask_interactive(args, defaults):
             if picked and all(s in ALLOWED_SUITES for s in picked):
                 args.suites = ",".join(picked)
                 break
-            print(f"    allowed: auto,auto-py,manual,manual-py,official or all")
+            print(f"    allowed: auto,auto-cpp,manual,manual-cpp,official or all")
     advanced = [k for k in ("frames", "reconnect_window", "long_run",
                             "answer", "filter", "outdir") if k not in given]
     if advanced:
@@ -433,7 +435,7 @@ def _pip_install(*pkgs):
 
 
 def ensure_py_cv2():
-    """Best-effort cv2+numpy for auto-py/manual-py (headless: no libGL need).
+    """Best-effort cv2+numpy for auto/manual Python suites (headless: no libGL need).
     Hard requirement when py suites are selected."""
     try:
         import cv2  # noqa: F401
@@ -524,9 +526,9 @@ def main():
         os.getcwd(), "report", datetime.now().strftime("%Y-%m-%d-%H%M%S"))
     if not args.dry_run:
         ensure_openpyxl()
-        if ("auto-py" in args.suites or "manual-py" in args.suites) \
+        if ("auto" in args.suites or "manual" in args.suites) \
                 and not ensure_py_cv2():
-            print("ERROR: auto-py/manual-py need cv2+numpy; "
+            print("ERROR: auto/manual Python suites need cv2+numpy; "
                   "install failed (see above) or drop those suites.")
             return 2
     plan = build_plan(args, root, os.path.abspath(report_dir))
