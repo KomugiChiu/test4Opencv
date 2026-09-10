@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <glob.h>
 #include <fstream>
+#include <cstdlib>
+#include <unistd.h>
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -442,7 +444,9 @@ bool write_excel(const std::vector<std::map<std::string,std::string>>& results,
         "for i,w in enumerate((34,46,10,90,26),1): ws2.column_dimensions[get_column_letter(i)].width=w\n"
         "import os; os.makedirs(os.path.dirname(os.path.abspath(path)),exist_ok=True)\n"
         "wb.save(path)\n";
-    std::string tmp_json="/tmp/manual_cpp_results.json";
+    const char* tmpd = std::getenv("TMPDIR");
+    std::string tmp_json = std::string(tmpd && *tmpd ? tmpd : "/tmp") +
+        "/manual_cpp_results_" + std::to_string(::getpid()) + ".json";
     {
         std::ofstream f(tmp_json);
         f<<"[";
@@ -458,6 +462,8 @@ bool write_excel(const std::vector<std::map<std::string,std::string>>& results,
     std::string src_local = get_opencv_source_cpp();
     std::string cmd = "python3 - \""+tmp_json+"\" \""+path+"\" \""+generated_at+"\" \""+opencv_ver+"\" \""+src_local+"\" \""+device+"\" << 'PYEOF'\n"+py+"\nPYEOF\n";
     int rc = std::system(cmd.c_str());
+    std::error_code ec;
+    fs::remove(tmp_json, ec); // best-effort temp cleanup
     return rc==0 && fs::exists(path);
 }
 
