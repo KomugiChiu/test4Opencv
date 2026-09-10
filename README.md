@@ -413,7 +413,7 @@ sudo bash scripts/install_prebuilt.sh \
 
 **可以。`install/`（或 `/opt/camera-toolkit`）本身就是 relocatable 包，
 在資料夾內直接執行即可**，靠兩層機制：cross 件是 `$ORIGIN` RPATH，
-native 件靠 `setup_vars.sh` 的 `LD_LIBRARY_PATH` fallback；
+native 件靠 `scripts/setup_vars.sh` 的 `LD_LIBRARY_PATH` fallback；
 `scripts/run_test_*.sh` 偵測到自己身處包內（`../bin/` 存在）會自動設
 `PREBUILT_ROOT` 並跳過 `git/cmake/apt` 重編：
 

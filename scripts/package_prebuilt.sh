@@ -84,13 +84,15 @@ cp -a "$HERE/manual_cpp/manifest_manual.yaml" "$ROOT/manual_cpp/" 2>/dev/null ||
 [[ -f "$OPENCV_TEST_BUILD_DIR/VERSION.json" ]] && cp -a "$OPENCV_TEST_BUILD_DIR/VERSION.json" "$ROOT/"
 cp -a "$HERE/run_config.prebuilt.default.yaml" "$ROOT/run_config.prebuilt.yaml"
 cp -a "$HERE/README.prebuilt.md" "$ROOT/README.md"
-cp -a "$HERE/run_prebuilt_tests.py" "$HERE/run_test.sh" "$ROOT/"
+cp -a "$HERE/run_prebuilt_tests.py" "$ROOT/scripts/"
+cp -a "$HERE/run_test.sh" "$ROOT/"
 chmod +x "$ROOT/run_test.sh"
 
-cat > "$ROOT/setup_vars.sh" <<'EOF'
+cat > "$ROOT/scripts/setup_vars.sh" <<'EOF'
 # shellcheck disable=SC2148
 # Relocatable env: prefer $ORIGIN RPATH; LD_LIBRARY_PATH is a fallback.
-_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Sourced as <root>/scripts/setup_vars.sh (lives in scripts/, only run_test.sh stays at root).
+_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export LD_LIBRARY_PATH="$_ROOT/lib${LD_LIBRARY_PATH:+:$_ROOT/lib:$LD_LIBRARY_PATH}"
 export PREBUILT_ROOT="$_ROOT"
 export CPP_OPENCV_SOURCE=selfbuild
