@@ -4,6 +4,7 @@
 #include <filesystem>
 namespace fs=std::filesystem;
 int main(int argc,char*argv[]){
+    std::cout<<std::unitbuf; // live sweep progress under pipes
     std::string device="/dev/video0", backend="V4L2", values="2500,4000,5500,6500", outdir="./wb_check";
     std::string command="temp";
     for(int i=1;i<argc;++i){

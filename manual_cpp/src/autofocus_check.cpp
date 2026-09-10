@@ -4,6 +4,7 @@
 #include <filesystem>
 namespace fs=std::filesystem;
 int main(int argc,char*argv[]){
+    std::cout<<std::unitbuf; // live sweep progress under pipes
     std::string device="/dev/video0", backend="V4L2", values="0,80,160,250", outdir="./focus_check";
     std::string command="focus";
     for(int i=1;i<argc;++i){

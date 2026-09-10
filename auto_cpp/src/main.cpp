@@ -725,6 +725,7 @@ void print_inventory(){std::cout<<bold("OpenCV Camera API Test (C++) inventory")
   for(auto&item:planned){if(item.first!=cur){cur=item.first;std::cout<<cyan("\n["+std::string(1,cur)+"]")<<"\n";}std::cout<<"    - "<<item.second<<"\n";}
   std::cout<<"\nCAP_PROP table: "<<camprops::PROP_TABLE_N<<"\n";}
 int main(int argc,char**argv){
+  std::cout<<std::unitbuf; // live progress under pipes
   Args args=parse_args(argc,argv);
   cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_ERROR);
   if(args.list_only){print_inventory();return 0;}

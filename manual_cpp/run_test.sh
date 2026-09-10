@@ -233,4 +233,10 @@ echo "[manual_cpp] device=$DEVICE_NORM (raw=$DEVICE)  report=${REPORT:-report/ne
 if [[ -n "$ITEM" ]]; then echo "[manual_cpp] single item: $ITEM" >&2; fi
 if [[ -n "$ANSWER" ]]; then echo "[manual_cpp] non-interactive answer=$ANSWER" >&2; fi
 
-exec "$BIN" "${EXTRA_ARGS[@]}"
+# stdbuf keeps child stdio line-buffered under pipes (belt over the
+# std::unitbuf compiled into the binaries; harmless if stdbuf missing).
+if command -v stdbuf >/dev/null 2>&1; then
+  exec stdbuf -oL -eL "$BIN" "${EXTRA_ARGS[@]}"
+else
+  exec "$BIN" "${EXTRA_ARGS[@]}"
+fi

@@ -588,6 +588,7 @@ void ensure_device_exists(const std::string& dev) {
 }
 
 int main(int argc, char** argv) {
+  std::cout<<std::unitbuf; // live output under pipes
   Args args = parse_args(argc, argv);
   g_color = isatty(1);
   g_answer = args.answer;

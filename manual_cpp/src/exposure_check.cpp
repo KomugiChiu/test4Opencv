@@ -4,6 +4,7 @@
 #include <filesystem>
 namespace fs = std::filesystem;
 int main(int argc, char* argv[]) {
+    std::cout<<std::unitbuf; // live sweep progress under pipes
     std::string device="/dev/video0", backend="V4L2", values="10,50,100,200,400";
     std::string command="sweep", outdir="./exp_check";
     int frames=12, settle_n=8;

@@ -463,6 +463,7 @@ bool write_excel(const std::vector<std::map<std::string,std::string>>& results,
 
 // ---------- main ----------
 int main(int argc, char* argv[]) {
+    std::cout<<std::unitbuf; // live verdicts/prompts under pipes
     Args a;
     for(int i=1;i<argc;++i){
         std::string arg=argv[i];

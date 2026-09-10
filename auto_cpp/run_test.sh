@@ -185,10 +185,17 @@ done
 set +e
 HAS_OUTDIR=0
 for a in "${ARGS[@]:-}"; do [[ "$a" == "--outdir" || "$a" == "-o" ]] && HAS_OUTDIR=1; done
-if [[ $HAS_OUTDIR -eq 1 ]]; then
-  "$BIN" "${ARGS[@]:+"${ARGS[@]}"}"
+# stdbuf keeps child stdio line-buffered under pipes (belt over the
+# std::unitbuf compiled into the binary; harmless if stdbuf missing).
+if command -v stdbuf >/dev/null 2>&1; then
+  _RUN=(stdbuf -oL -eL "$BIN")
 else
-  "$BIN" --outdir "$OUTDIR" "${ARGS[@]:+"${ARGS[@]}"}"
+  _RUN=("$BIN")
+fi
+if [[ $HAS_OUTDIR -eq 1 ]]; then
+  "${_RUN[@]}" "${ARGS[@]:+"${ARGS[@]}"}"
+else
+  "${_RUN[@]}" --outdir "$OUTDIR" "${ARGS[@]:+"${ARGS[@]}"}"
 fi
 RC=$?
 set -e

@@ -12,6 +12,8 @@ while [[ $# -gt 0 ]]; do
 done
 fail=0
 echo "== verify $OPENCV_TEST_BUILD_DIR =="
+# $ORIGIN-RPATH binaries resolve selfbuild libs via this dir (same as runtime setup_vars.sh).
+export LD_LIBRARY_PATH="$OPENCV_TEST_BUILD_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 for f in "$HERE/auto_cpp/build/opencv_camera_api_test_cpp" \
          "$HERE/manual_cpp/build/manual_suite" \
          "$OPENCV_TEST_BUILD_DIR/bin/opencv_test_videoio" \

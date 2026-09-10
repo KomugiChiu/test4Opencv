@@ -7,6 +7,7 @@
 #include <fstream>
 namespace fs=std::filesystem;
 int main(int argc,char*argv[]){
+    std::cout<<std::unitbuf; // live progress under pipes (reconnect window)
     std::string device="/dev/video0", backend="V4L2", outdir="./reconnect_report";
     double max_duration=30; int fail_thresh=5, good_needed=3; double retry=1.0;
     for(int i=1;i<argc;++i){
@@ -24,7 +25,7 @@ int main(int argc,char*argv[]){
     std::ofstream ej(outdir+"/events.jsonl"), sj(outdir+"/summary.json");
     cv::VideoCapture cap; int fails=0, good=0, attempts=0, frames_ok=0, exceptions=0;
     double last_good=elapsed(); std::string state="RECONNECTING";
-    auto log=[&](const std::string& ev){ std::cout<<"["<<elapsed()<<"s] "<<ev<<"\n"; ej<<"{\"t\":"<<elapsed()<<",\"event\":\""<<ev<<"\"}\n"; };
+    auto log=[&](const std::string& ev){ std::cout<<"["<<elapsed()<<"s] "<<ev<<"\n"; ej<<"{\"t\":"<<elapsed()<<",\"event\":\""<<ev<<"\"}\n"<<std::flush; };
     log("state to RECONNECTING");
     while(elapsed()<max_duration){
         if(state=="RECONNECTING"||state=="LOST"){
